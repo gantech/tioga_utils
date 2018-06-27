@@ -69,9 +69,8 @@ void MeshMotion::setup()
 void MeshMotion::initialize()
 {
     init_coordinates();
-    if (startTime_ > 0.0)
-        for (auto& mm: meshMotionVec_)
-            mm->initialize(startTime_);
+    for (auto& mm: meshMotionVec_)
+        mm->initialize(startTime_);
 }
 
 void MeshMotion::execute(const int istep)

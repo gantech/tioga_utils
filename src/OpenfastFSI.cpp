@@ -170,29 +170,24 @@ void OpenfastFSI::load(const YAML::Node& node)
     FAST.setInputs(fi);
     FAST.allocateTurbinesToProcsSimple(); 
     FAST.init();
-    
 }
 
 void OpenfastFSI::initialize(double initial_time)
 {
-    
+    //TODO:  Calculate initial loads here and send to OpenFAST
     FAST.solution0();
+    //TODO: Grab initial deformations and apply to structure
     deform_mesh(initial_time);
 }
 
 void OpenfastFSI::execute(double current_time)
 {
 
-    //Appy deformations to CFD mesh ere
+    //TODO: Grab deformations from OpenFAST and apply deformations to CFD mesh here
     deform_mesh(current_time);
-
-    //Set inputs to OpenFAST here
-//    FAST.update_states_driver_time_step();
-//    FAST.advance_to_next_driver_time_step();
-    for (int iSubstep=1; iSubstep < fi.nSubsteps+1; iSubstep++) {
-        std::cout << "Running sub-step" << iSubstep << std::endl;
-        FAST.step();
-    }
+    //TODO: Calculate loads and send to OpenFAST here
+    FAST.update_states_driver_time_step();
+    FAST.advance_to_next_driver_time_step();
     
 }
 
