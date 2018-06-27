@@ -18,6 +18,14 @@ find_package(TIOGA REQUIRED)
 find_library(NALU_LIBRARIES NAMES libnalu.a PATHS ${NALU_DIR}/build)
 find_path(NALU_INCLUDES Realm.h PATHS ${NALU_DIR}/include)
 
+set(CMAKE_PREFIX_PATH ${OpenFAST_DIR} ${CMAKE_PREFIX_PATH})
+find_package(OpenFAST REQUIRED)
+if(OpenFAST_FOUND)
+  message("-- Found OpenFAST = ${OpenFAST_DIR}")
+endif()
+include_directories(${OpenFAST_INCLUDE_DIRS})
+add_definitions("-DNALU_USES_OPENFAST")
+
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include_directories(${MPI_INCLUDE_PATH})
@@ -37,12 +45,17 @@ add_executable(stk2tioga
 
   MotionBase.cpp
   MeshRotation.cpp
+  OpenfastFSI.cpp
   MeshMotion.cpp
   Timer.cpp
 
   stk2tioga.cpp)
+
 target_link_libraries(stk2tioga
   ${NALU_LIBRARIES}
   ${Trilinos_LIBRARIES}
   ${YAML_LIBRARIES}
-  ${TIOGA_LIBRARIES})
+  ${TIOGA_LIBRARIES}
+  ${OpenFAST_LIBRARIES}
+  ${OpenFAST_CPP_LIBRARIES}
+  )

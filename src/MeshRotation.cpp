@@ -24,10 +24,14 @@ void MeshRotation::load(const YAML::Node& node)
         partNames_ = fparts.as<std::vector<std::string>>();
     }
 
+    std::cout << "Read mesh parts" << std::endl ;
     omega_ = node["omega"].as<double>();
+    std::cout << "Read omega " << std::endl ;
     axis_ = node["axis"].as<std::vector<double>>();
+    std::cout << "Read axis " << std::endl ;
     origin_ = node["origin"].as<std::vector<double>>();
-
+    std::cout << "Read origin " << std::endl ;
+    
     assert(axis_.size() == 3);
     assert(origin_.size() == 3);
 }

@@ -1,6 +1,7 @@
 
 #include "MeshMotion.h"
 #include "MeshRotation.h"
+#include "OpenfastFSI.h"
 
 #include "stk_mesh/base/Field.hpp"
 
@@ -23,13 +24,18 @@ void MeshMotion::load(const YAML::Node& node)
     const int num_groups = minfo.size();
     meshMotionVec_.resize(num_groups);
 
+    std::cout << "Number of groups = " << num_groups << std::endl ;
     for (int i=0; i < num_groups; i++) {
         const auto& motion_def = minfo[i];
         std::string type = "rotation";
         if (motion_def["type"]) type = motion_def["type"].as<std::string>();
 
         if (type == "rotation") {
+            std::cout << "Rotation type found " << std::endl ;
             meshMotionVec_[i].reset(new MeshRotation(meta_, bulk_, motion_def));
+        } else if (type == "openfastfsi") {
+            std::cout << "OpenFAST FSI found " << std::endl ;
+            meshMotionVec_[i].reset(new OpenfastFSI(meta_, bulk_, motion_def));
         } else {
             throw std::runtime_error("MeshMotion: Invalid mesh motion type: " + type);
         }

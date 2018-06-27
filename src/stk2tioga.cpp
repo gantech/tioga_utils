@@ -144,23 +144,11 @@ void write_mesh(
     has_motion = true;
 
   tag_procs(meta, bulk);
-  ScalarFieldType* ibf = meta.get_field<ScalarFieldType>(
-      stk::topology::NODE_RANK, "iblank");
-  ScalarFieldType* ibcell = meta.get_field<ScalarFieldType>(
-      stk::topology::ELEM_RANK, "iblank_cell");
-  ScalarFieldType *ipnode = meta.get_field<ScalarFieldType>
-      (stk::topology::NODE_RANK, "pid_node");
-  ScalarFieldType *ipelem = meta.get_field<ScalarFieldType>
-      (stk::topology::ELEM_RANK, "pid_elem");
 
   std::string out_mesh = inpfile["output_mesh"].as<std::string>();
   if (bulk.parallel_rank() == 0)
       std::cout << "Writing output file: " << out_mesh << std::endl;
   size_t fh = stkio.create_output_mesh(out_mesh, stk::io::WRITE_RESTART);
-  stkio.add_field(fh, *ibf);
-  stkio.add_field(fh, *ibcell);
-  stkio.add_field(fh, *ipnode);
-  stkio.add_field(fh, *ipelem);
 
   if (has_motion) {
       VectorFieldType* mesh_disp = meta.get_field<VectorFieldType>(
@@ -225,12 +213,10 @@ int main(int argc, char** argv)
       }
 
       const YAML::Node& oset_info = inpfile["overset_info"];
-      tioga_nalu::TiogaSTKIface tg(meta, bulk, oset_info, coords_name);
 
       if (iproc == 0)
           std::cout << "Calling TIOGA setup... " << std::endl;
       if (has_motion) mesh_motion->setup();
-      tg.setup();
 
       ScalarFieldType& ipnode = meta.declare_field<ScalarFieldType>
           (stk::topology::NODE_RANK, "pid_node");
@@ -249,15 +235,6 @@ int main(int argc, char** argv)
       if (iproc == 0)
           std::cout << "Initializing TIOGA... " << std::endl;
       if (has_motion) mesh_motion->initialize();
-      tg.initialize();
-
-      if (iproc == 0)
-          std::cout << "Performing initial overset connectivity... " << std::endl;
-      tg.execute();
-      tg.check_soln_norm();
-      print_memory_diag(bulk);
-      if (iproc == 0)
-          std::cout << "Completed initial overset connectivity" << std::endl;
 
       if (has_motion) {
           int nsteps = mesh_motion->num_steps();
@@ -272,19 +249,18 @@ int main(int argc, char** argv)
                             << "Time step/time = " << (nt + 1)
                             << "; " << mesh_motion->current_time()
                             << " s" << std::endl;
-              tg.execute();
-              tg.check_soln_norm();
               print_memory_diag(bulk);
+              {
+                  auto timeMon3 = tioga_nalu::get_timer("stk2tioga::write_mesh");
+                  double curr_time = has_motion ? mesh_motion->current_time() : 0.0;
+                  write_mesh(inpfile, meta, bulk, stkio, curr_time);
+              }
+              
           }
       }
 
       stk::parallel_machine_barrier(bulk.parallel());
 
-      {
-          auto timeMon3 = tioga_nalu::get_timer("stk2tioga::write_mesh");
-          double curr_time = has_motion ? mesh_motion->current_time() : 0.0;
-          write_mesh(inpfile, meta, bulk, stkio, curr_time);
-      }
 
       bool dump_partitions = false;
       if (inpfile["dump_tioga_partitions"])
@@ -293,7 +269,6 @@ int main(int argc, char** argv)
           auto timeMon4 = tioga_nalu::get_timer("stk2tioga::dump_tioga_partitions");
           if (iproc == 0)
               std::cout << "Dumping tioga partitions... " << std::endl;
-          tg.tioga_iface().writeData(0, 0);
       }
       stk::parallel_machine_barrier(bulk.parallel());
       print_hwm_memory_diag(bulk);
