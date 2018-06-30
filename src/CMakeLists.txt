@@ -46,6 +46,7 @@ add_executable(stk2tioga
   MotionBase.cpp
   MeshRotation.cpp
   OpenfastFSI.cpp
+  fsiTurbine.cpp
   MeshMotion.cpp
   Timer.cpp
 

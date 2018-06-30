@@ -1,5 +1,6 @@
 
 #include "OpenfastFSI.h"
+#include "fsiTurbine.h"
 
 #include <cassert>
 #include <cmath>
@@ -21,7 +22,7 @@ OpenfastFSI::~OpenfastFSI() {
     
 }
     
-void readTurbineData(int iTurb, fast::fastInputs & fi, YAML::Node turbNode) {
+void OpenfastFSI::read_turbine_data(int iTurb, fast::fastInputs & fi, YAML::Node turbNode) {
 
     //Read turbine data for a given turbine using the YAML node
     if (turbNode["turb_id"]) {
@@ -29,9 +30,10 @@ void readTurbineData(int iTurb, fast::fastInputs & fi, YAML::Node turbNode) {
     } else {
         turbNode["turb_id"] = iTurb;
     }
-    if (turbNode["simType"]) {
-        if (turbNode["simType"].as<std::string>() == "ext-loads") {
+    if (turbNode["sim_type"]) {
+        if (turbNode["sim_type"].as<std::string>() == "ext-loads") {
             fi.globTurbineData[iTurb].sType = fast::EXTLOADS;
+            fsiTurbineData_[iTurb] = new fsiTurbine(iTurb, turbNode);
         } else {
             fi.globTurbineData[iTurb].sType = fast::EXTINFLOW;
         }
@@ -95,6 +97,8 @@ void OpenfastFSI::load(const YAML::Node& node)
     fi.nTurbinesGlob = node["n_turbines_glob"].as<int>();
     
     if (fi.nTurbinesGlob > 0) {
+
+        fsiTurbineData_.resize(fi.nTurbinesGlob);
         
         if(node["dry_run"]) {
             fi.dryRun = node["dry_run"].as<bool>();
@@ -146,7 +150,7 @@ void OpenfastFSI::load(const YAML::Node& node)
         fi.globTurbineData.resize(fi.nTurbinesGlob);
         for (int iTurb=0; iTurb < fi.nTurbinesGlob; iTurb++) {
             if (node["Turbine" + std::to_string(iTurb)]) {
-                readTurbineData(iTurb, fi, node["Turbine" + std::to_string(iTurb)] );
+                read_turbine_data(iTurb, fi, node["Turbine" + std::to_string(iTurb)] );
             } else {
                 throw std::runtime_error("Node for Turbine" + std::to_string(iTurb) + " not present in input file or I cannot read it");
             }
@@ -170,6 +174,9 @@ void OpenfastFSI::load(const YAML::Node& node)
     FAST.setInputs(fi);
     FAST.allocateTurbinesToProcsSimple(); 
     FAST.init();
+
+    //TODO: Check here on the processor containing the turbine that the number of blades on the turbine is the same as the number of blade parts specified in the input file.
+    
 }
 
 void OpenfastFSI::initialize(double initial_time)

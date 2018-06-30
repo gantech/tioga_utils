@@ -32,6 +32,7 @@
 
 typedef stk::mesh::Field<double, stk::mesh::Cartesian> VectorFieldType;
 typedef stk::mesh::Field<double> ScalarFieldType;
+typedef stk::mesh::Field<int> ScalarIntFieldType;
 
 const double pi = std::acos(-1.0);
 

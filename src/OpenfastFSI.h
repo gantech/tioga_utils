@@ -2,6 +2,7 @@
 #define OPENFASTFSI_H
 
 #include "MotionBase.h"
+#include "fsiTurbine.h"
 #include "OpenFAST.H"
 #include "yaml-cpp/yaml.h"
 
@@ -36,8 +37,10 @@ private:
     fast::OpenFAST FAST;
     
     fast::fastInputs fi ;
+
+    std::vector<fsiTurbine*> fsiTurbineData_;
     
-    void read_turbine_data(int iTurb, fast::fastInputs & fi, YAML::Node & turbNode);
+    void read_turbine_data(int iTurb, fast::fastInputs & fi, YAML::Node turbNode);
 
     void read_inputs(fast::fastInputs & fi, YAML::Node & ofNode);
 
