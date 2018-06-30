@@ -63,6 +63,7 @@ private:
     int nBlades_; // Number of blades in the turbine    
     std::vector<ScalarIntFieldType *> bldLoadMap_; // Maps every node on the blade surface to the closest node of the openfast blade mesh element 
     std::vector<ScalarIntFieldType *> bldDispMap_; // Maps every node on the blade surface to the lower node of the openfast mesh element containing the projection of the blade surface node on to the openfast mesh blade element
+    std::vector<ScalarFieldType *> bldDispMapInterp_; // The location of the CFD surface mesh node projected along the OpenFAST mesh element in non-dimensional [0,1] co-ordinates.
 
     //! Field containing the FSI force at all nodes on the turbine surface
     VectorFieldType * fsiForce_;
