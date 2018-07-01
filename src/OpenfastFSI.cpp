@@ -12,7 +12,7 @@ OpenfastFSI::OpenfastFSI(
     stk::mesh::BulkData& bulk,
     const YAML::Node& node
 ) : MotionBase(meta, bulk)
-{
+{    
     load(node);
 }
 
@@ -33,7 +33,7 @@ void OpenfastFSI::read_turbine_data(int iTurb, fast::fastInputs & fi, YAML::Node
     if (turbNode["sim_type"]) {
         if (turbNode["sim_type"].as<std::string>() == "ext-loads") {
             fi.globTurbineData[iTurb].sType = fast::EXTLOADS;
-            fsiTurbineData_[iTurb] = new fsiTurbine(iTurb, turbNode);
+            fsiTurbineData_[iTurb] = new fsiTurbine(iTurb, turbNode, meta_, bulk_);
         } else {
             fi.globTurbineData[iTurb].sType = fast::EXTINFLOW;
         }
@@ -172,19 +172,57 @@ void OpenfastFSI::load(const YAML::Node& node)
     assert(origin_.size() == 3);
 
     FAST.setInputs(fi);
-    FAST.allocateTurbinesToProcsSimple(); 
-    FAST.init();
 
-    //TODO: Check here on the processor containing the turbine that the number of blades on the turbine is the same as the number of blade parts specified in the input file.
+}
+
+void OpenfastFSI::setup() {
+
+    int nTurbinesGlob = FAST.get_nTurbinesGlob();
+    for (int i=0; i < nTurbinesGlob; i++) {
+        if(fsiTurbineData_[i] != NULL) // This may not be a turbine intended for blade-resolved simulation
+            fsiTurbineData_[i]->setup();
+    }
     
 }
 
 void OpenfastFSI::initialize(double initial_time)
 {
-    //TODO:  Calculate initial loads here and send to OpenFAST
+    
+    FAST.allocateTurbinesToProcsSimple(); 
+    FAST.init();
+    //TODO: Check here on the processor containing the turbine that the number of blades on the turbine is the same as the number of blade parts specified in the input file.
+
+    //TODO: In the documentation, mention that the CFD mesh must always be created for the turbine in the reference position defined in OpenFAST, i.e. with blade1 pointing up and the other blades following it in order as the turbine rotates clockwise facing downwind. If the mesh is not created this way, the mapping won't work. Any non-zero initial azimuth and/or initial yaw must be only specified in the OpenFAST input file and the mesh will automatically be deformed after calling solution0. Requiring the initial CFD mesh to be in the reference configuration may not always work if the mesh domain and initial yaw setting does not align with the reference configuration. May be this is isn't an issue because unlike AeroDyn, ExtLoads does not create the initial mesh independent of the ElastoDyn/BeamDyn. May be ExtLoads already has the correct yaw and azimuth setting from OpenFAST after the init call. In this case, the CFD mesh must start in the correct azimuth and yaw configuration. In which case, the initial yaw and azimuth must be obtained from OpenFAST and the mesh around the turbine must be deformed through rigid body motion first before starting any mapping.
+
+    int nTurbinesGlob = FAST.get_nTurbinesGlob();
+    for (int i=0; i < nTurbinesGlob; i++) {
+        if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation
+            FAST.get_turbineParams(i, fsiTurbineData_[i]->params_);
+            fsiTurbineData_[i]->initialize(); //TODO: Allocate memory to store all positions, deflections, velocity, and loads.
+         }
+    }
+    
+    compute_mapping();
+    send_loads();
     FAST.solution0();
-    //TODO: Grab initial deformations and apply to structure
     deform_mesh(initial_time);
+    
+}
+
+void OpenfastFSI::compute_mapping() {
+
+    int nTurbinesGlob = FAST.get_nTurbinesGlob();
+    for (int i=0; i < nTurbinesGlob; i++) {
+        if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation
+            FAST.getTowerRefPositions(fsiTurbineData_[i]->brFSIdata_.twr_ref_pos, i);
+            FAST.getBladeRefPositions(fsiTurbineData_[i]->brFSIdata_.bld_ref_pos, i);
+            FAST.getHubRefPosition(fsiTurbineData_[i]->brFSIdata_.hub_ref_pos, i);
+            FAST.getNacelleRefPosition(fsiTurbineData_[i]->brFSIdata_.nac_ref_pos, i);
+            fsiTurbineData_[i]->computeMapping();
+            
+        }
+    }
+    
 }
 
 void OpenfastFSI::execute(double current_time)
@@ -192,14 +230,46 @@ void OpenfastFSI::execute(double current_time)
 
     //TODO: Grab deformations from OpenFAST and apply deformations to CFD mesh here
     deform_mesh(current_time);
-    //TODO: Calculate loads and send to OpenFAST here
+    //In Nalu - the CFD time step should ideally be performed here. 
+    send_loads();
     FAST.update_states_driver_time_step();
     FAST.advance_to_next_driver_time_step();
+    
+}
+  
+
+void OpenfastFSI::send_loads() {
+
+    int nTurbinesGlob = FAST.get_nTurbinesGlob();
+    for (int i=0; i < nTurbinesGlob; i++) {
+        if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation
+            fsiTurbineData_[i]->mapLoads();
+            FAST.setTowerForces(fsiTurbineData_[i]->brFSIdata_.twr_ld, i, fast::np1);
+            FAST.setBladeForces(fsiTurbineData_[i]->brFSIdata_.bld_ld, i, fast::np1);
+        }
+    }
+    
+}
+
+void OpenfastFSI::get_displacements() {
+
+    int nTurbinesGlob = FAST.get_nTurbinesGlob();
+    for (int i=0; i < nTurbinesGlob; i++) {
+        if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation
+            FAST.getTowerDisplacements(fsiTurbineData_[i]->brFSIdata_.twr_def, fsiTurbineData_[i]->brFSIdata_.twr_vel, i, fast::np1);
+            FAST.getBladeDisplacements(fsiTurbineData_[i]->brFSIdata_.bld_def, fsiTurbineData_[i]->brFSIdata_.bld_vel, i, fast::np1);
+            FAST.getHubDisplacement(fsiTurbineData_[i]->brFSIdata_.hub_def, fsiTurbineData_[i]->brFSIdata_.hub_vel, i, fast::np1);
+            FAST.getNacelleDisplacement(fsiTurbineData_[i]->brFSIdata_.nac_def, fsiTurbineData_[i]->brFSIdata_.nac_vel, i, fast::np1);
+        }
+    }
     
 }
 
 void OpenfastFSI::deform_mesh(double current_time)
 {
+
+    get_displacements(); // Get displacements from the OpenFAST - C++ API
+    
     const int ndim = meta_.spatial_dimension();
     VectorFieldType* modelCoords = meta_.get_field<VectorFieldType>(
         stk::topology::NODE_RANK, "coordinates");

@@ -18,6 +18,8 @@ public:
 
     ~OpenfastFSI();
 
+    virtual void setup();
+        
     virtual void initialize(double);
 
     virtual void execute(double);
@@ -29,6 +31,12 @@ private:
     void load(const YAML::Node&);
 
     void deform_mesh(double);
+
+    void compute_mapping();
+
+    void send_loads();
+
+    void get_displacements();
 
     std::vector<double> origin_{0.0, 0.0, 0.0};
 
@@ -43,7 +51,6 @@ private:
     void read_turbine_data(int iTurb, fast::fastInputs & fi, YAML::Node turbNode);
 
     void read_inputs(fast::fastInputs & fi, YAML::Node & ofNode);
-
     
 };
 

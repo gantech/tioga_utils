@@ -40,6 +40,8 @@ private:
 
     void init_coordinates();
 
+    void create_sample_force_field();
+    
     stk::mesh::MetaData& meta_;
 
     stk::mesh::BulkData& bulk_;

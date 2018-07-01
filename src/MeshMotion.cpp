@@ -62,6 +62,9 @@ void MeshMotion::setup()
     stk::mesh::put_field(current_coordinates, meta_.universal_part());
     stk::mesh::put_field(mesh_displacement, meta_.universal_part());
 
+    //TODO: Create some if condition when OpenfastFSI is chosen as a part of MeshMotion
+    create_sample_force_field();
+
     for (auto& mm: meshMotionVec_)
         mm->setup();
 }
@@ -105,4 +108,17 @@ void MeshMotion::init_coordinates()
     }
 }
 
+
+void MeshMotion::create_sample_force_field() {
+    
+    const int nDim = meta_.spatial_dimension();
+    std::vector<std::string> partNameVec = {"blade1", "blade2", "blade3", "hub", "nacelle", "tower"};
+    VectorFieldType *fsiForce = &(meta_.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "fsi_force"));
+    for (std::vector<std::string>::iterator it = partNameVec.begin() ; it != partNameVec.end(); ++it) {
+        auto * part = meta_.get_part(*it);
+        stk::mesh::put_field(*fsiForce, *part, nDim);
+    }
+    
+}
+    
 } // tioga_nalu
