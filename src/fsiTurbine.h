@@ -67,6 +67,13 @@ private:
     */
     double projectPt2Line(std::vector<double> & pt, std::vector<double> & lStart, std::vector<double> & lEnd);
 
+    /** Project a point 'pt' onto a line from 'lStart' to 'lEnd' and return the non-dimensional distance of 'pt' from the line w.r.t the distance from 'lStart' to 'lEnd'
+        \f[ 
+        \vec{perp} &= (\vec{pt} - \vec{lStart}) - \frac{ (\vec{pt} - \vec{lStart}) \cdot ( \vec{lEnd} - \vec{lStart} ) }{ (\vec{lEnd} - \vec{lStart}) \cdot (\vec{lEnd} - \vec{lStart}) } ( \vec{lEnd} - \vec{lStart} ) \\
+        nonDimPerpDist = \frac{\lvert \vec{perp} \rvert}{ \lvert  (\vec{lEnd} - \vec{lStart}) \rvert }
+        \f]
+    */
+    double perpProjectDist_Pt2Line(std::vector<double> & pt, std::vector<double> & lStart, std::vector<double> & lEnd);
 
     stk::mesh::MetaData& meta_;
     stk::mesh::BulkData& bulk_;
@@ -78,9 +85,9 @@ private:
     ScalarIntFieldType * twrDispMap_; // Maps every node on the tower surface to the lower node of the openfast mesh element containing the projection of the tower surface node on to the openfast mesh tower element
     ScalarFieldType * twrDispMapInterp_; // The location of the CFD surface mesh node projected along the OpenFAST mesh element in non-dimensional [0,1] co-ordinates.
     int nBlades_; // Number of blades in the turbine    
-    std::vector<ScalarIntFieldType *> bldLoadMap_; // Maps every node on the blade surface to the closest node of the openfast blade mesh element 
-    std::vector<ScalarIntFieldType *> bldDispMap_; // Maps every node on the blade surface to the lower node of the openfast mesh element containing the projection of the blade surface node on to the openfast mesh blade element
-    std::vector<ScalarFieldType *> bldDispMapInterp_; // The location of the CFD surface mesh node projected along the OpenFAST mesh element in non-dimensional [0,1] co-ordinates.
+    ScalarIntFieldType * bldLoadMap_; // Maps every node on the blade surface to the closest node of the openfast blade mesh element 
+    ScalarIntFieldType * bldDispMap_; // Maps every node on the blade surface to the lower node of the openfast mesh element containing the projection of the blade surface node on to the openfast mesh blade element
+    ScalarFieldType * bldDispMapInterp_; // The location of the CFD surface mesh node projected along the OpenFAST mesh element in non-dimensional [0,1] co-ordinates.
 
     //! Field containing the FSI force at all nodes on the turbine surface
     VectorFieldType * fsiForce_;
