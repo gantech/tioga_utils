@@ -89,6 +89,27 @@ void fsiTurbine::setup() {
 void fsiTurbine::initialize() {
 
     //Allocate memory for loads and deflections data
+
+    int nTwrPts = params_.nBRfsiPtsTwr;
+    int nBlades = params_.numBlades;
+    int nTotBldPts = 0;
+    for (int i=0; i < nBlades; i++)
+        nTotBldPts += params_.nBRfsiPtsBlade[i];
+    brFSIdata_.twr_ref_pos.resize(6*nTwrPts);
+    brFSIdata_.twr_def.resize(6*nTwrPts);
+    brFSIdata_.twr_vel.resize(6*nTwrPts);
+    brFSIdata_.twr_ld.resize(6*nTwrPts);
+    brFSIdata_.bld_ref_pos.resize(6*nTotBldPts);
+    brFSIdata_.bld_def.resize(6*nTotBldPts);
+    brFSIdata_.bld_vel.resize(6*nTotBldPts);
+    brFSIdata_.bld_ld.resize(6*nTotBldPts);
+    brFSIdata_.hub_ref_pos.resize(6);
+    brFSIdata_.hub_def.resize(6);
+    brFSIdata_.hub_vel.resize(6);
+    brFSIdata_.nac_ref_pos.resize(6);
+    brFSIdata_.nac_def.resize(6);
+    brFSIdata_.nac_vel.resize(6);
+    
 }
 
 //! Convert pressure and viscous/turbulent stress on the turbine surface CFD mesh into a "fsiForce" field on the turbine surface CFD mesh
@@ -128,6 +149,8 @@ void fsiTurbine::computeDisplacement() {
 //! Map each node on the turbine surface CFD mesh to 
 void fsiTurbine::computeMapping() {
 
+    std::cout << "Computing mapping" << std::endl ;
+    
     const int ndim = meta_.spatial_dimension();
     VectorFieldType* modelCoords = meta_.get_field<VectorFieldType>(
         stk::topology::NODE_RANK, "coordinates");
@@ -157,6 +180,9 @@ void fsiTurbine::computeMapping() {
                     *dispMapInterpNode = nDimCoord;
                     *dispMapNode = i;
                     *loadMapNode = i + std::round(nDimCoord);
+
+                    std::cout << "Projection found for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on the tower on turbine " + std::to_string(params_.TurbID) + ". OpenFAST mesh elment is (" + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Interpolation factor = " << nDimCoord << std::endl ;
+                    break;
                 }
             }
 
@@ -204,6 +230,10 @@ void fsiTurbine::computeMapping() {
                         *dispMapInterpNode = nDimCoord;
                         *dispMapNode = i;
                         *loadMapNode = i + std::round(nDimCoord);
+
+                        std::cout << "Projection found for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on the blade " << iBlade << " on turbine " + std::to_string(params_.TurbID) + ". OpenFAST mesh elment is (" + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Interpolation factor = " << nDimCoord << std::endl ;
+                        
+                        break;
                     }
                 }
                 

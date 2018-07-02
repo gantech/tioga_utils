@@ -157,6 +157,8 @@ void write_mesh(
       stkio.add_field(fh, *mesh_disp);
   }
 
+  
+
   stkio.begin_output_step(fh, time);
   stkio.write_defined_output_fields(fh);
   stkio.end_output_step(fh);
