@@ -62,9 +62,14 @@ void MeshMotion::setup()
     stk::mesh::put_field(current_coordinates, meta_.universal_part());
     stk::mesh::put_field(mesh_displacement, meta_.universal_part());
 
-    //TODO: Create some if condition when OpenfastFSI is chosen as a part of MeshMotion
-    create_sample_force_field();
-
+    const int nDim = meta_.spatial_dimension();
+    std::vector<std::string> partNameVec = {"blade1", "blade2", "blade3", "hub", "nacelle", "tower"};
+    VectorFieldType *fsiForce = &(meta_.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "fsi_force"));
+    for (std::vector<std::string>::iterator it = partNameVec.begin() ; it != partNameVec.end(); ++it) {
+        auto * part = meta_.get_part(*it);
+        stk::mesh::put_field(*fsiForce, *part, nDim);
+    }
+    
     for (auto& mm: meshMotionVec_)
         mm->setup();
 }
@@ -72,6 +77,8 @@ void MeshMotion::setup()
 void MeshMotion::initialize()
 {
     init_coordinates();
+    //TODO: Create some if condition when OpenfastFSI is chosen as a part of MeshMotion
+    create_sample_force_field();
     for (auto& mm: meshMotionVec_)
         mm->initialize(startTime_);
 }
@@ -111,12 +118,23 @@ void MeshMotion::init_coordinates()
 
 void MeshMotion::create_sample_force_field() {
     
-    const int nDim = meta_.spatial_dimension();
-    std::vector<std::string> partNameVec = {"blade1", "blade2", "blade3", "hub", "nacelle", "tower"};
-    VectorFieldType *fsiForce = &(meta_.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "fsi_force"));
-    for (std::vector<std::string>::iterator it = partNameVec.begin() ; it != partNameVec.end(); ++it) {
+    VectorFieldType *fsiForce = meta_.get_field<VectorFieldType>(stk::topology::NODE_RANK, "fsi_force");
+
+    //For a 100m blade with uniform square cross section of 1m x 1m and a resolution of 21 (around cross section) x 101 (span), set a force corresponding to a uniform load of 5e-4 N/m along the blade.
+    std::vector<std::string> bladePartNameVec = {"blade1", "blade2", "blade3"};
+    for (std::vector<std::string>::iterator it = bladePartNameVec.begin() ; it != bladePartNameVec.end(); ++it) {
         auto * part = meta_.get_part(*it);
-        stk::mesh::put_field(*fsiForce, *part, nDim);
+        stk::mesh::Selector sel(*part);
+        std::cout << "Setting force at nodes " << std::endl ;        
+        const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
+        for (auto b: bkts) {
+            for (size_t in=0; in < b->size(); in++) {
+                auto node = (*b)[in];
+                double *fsiForceNode = stk::mesh::field_data(*fsiForce, node);
+                std::cout << "Setting force at node " << in << std::endl ;
+                fsiForceNode[0] = 2.3573785950023575e-05;
+            }
+        }
     }
     
 }

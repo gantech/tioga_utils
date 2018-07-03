@@ -75,6 +75,12 @@ private:
     */
     double perpProjectDist_Pt2Line(std::vector<double> & pt, std::vector<double> & lStart, std::vector<double> & lEnd);
 
+    //! Compute the effective force and moment at the OpenFAST mesh node for a given force at the CFD surface mesh node
+    void computeEffForceMoment(double *forceCFD, double *xyzCFD, double *forceMomOF, double *xyzOF);
+
+    //! Compute the effective force and moment at the hub (can be any point) from a given mesh part
+    void computeHubForceMomentForPart(std::vector<double> & hubForceMoment, std::vector<double> & hubPos, stk::mesh::Part * part);
+
     stk::mesh::MetaData& meta_;
     stk::mesh::BulkData& bulk_;
     

@@ -156,9 +156,107 @@ void fsiTurbine::mapLoads() {
     //To implement this function - assume that 'bldLoadMap_' field contains the node id along the blade or the tower that will accumulate the load corresponding to the node on the CFD surface mesh
 
     computeFSIforce();
+
+    const int ndim = meta_.spatial_dimension();
+    VectorFieldType* modelCoords = meta_.get_field<VectorFieldType>(stk::topology::NODE_RANK, "coordinates");
+
+    // Do the tower first
+    stk::mesh::Selector sel(*twrPart_);
+    const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
+    for (auto b: bkts) {
+        for (size_t in=0; in < b->size(); in++) {            
+            auto node = (*b)[in];
+            double* fsiForceNode = stk::mesh::field_data(*fsiForce_, node);
+            double* xyz = stk::mesh::field_data(*modelCoords, node);
+            int* loadMapNode = stk::mesh::field_data(*twrLoadMap_, node);
+            computeEffForceMoment(fsiForceNode, xyz, &(brFSIdata_.twr_ld[(*loadMapNode)*6]), &(brFSIdata_.twr_ref_pos[(*loadMapNode)*6]));
+        }
+    }
+
+    // Now the blades
+    int nBlades = params_.numBlades;
+    int iStart = 0;
+    for (int iBlade=0; iBlade < nBlades; iBlade++) {
+        int totBladeNodes = 0;
+        stk::mesh::Selector sel(*bladePartVec_[iBlade]);
+        const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
+        for (auto b: bkts) {
+            for (size_t in=0; in < b->size(); in++) {            
+                auto node = (*b)[in];
+                double* fsiForceNode = stk::mesh::field_data(*fsiForce_, node);
+                double* xyz = stk::mesh::field_data(*modelCoords, node);
+                int* loadMapNode = stk::mesh::field_data(*bldLoadMap_, node);
+                computeEffForceMoment(fsiForceNode, xyz, &(brFSIdata_.bld_ld[(*loadMapNode + iStart)*6]), &(brFSIdata_.bld_ref_pos[(*loadMapNode + iStart)*6]));
+                totBladeNodes++ ;
+            }
+        }
+
+
+        int nPtsBlade = params_.nBRfsiPtsBlade[iBlade];
+        
+        //Compute the total force and moment at the hub from this blade
+        std::vector<double> hubForceMoment(6,0.0);
+        computeHubForceMomentForPart(hubForceMoment, brFSIdata_.hub_ref_pos, bladePartVec_[iBlade]);
+        //Now compute total force and moment at the hub from the loads mapped to the 
+        std::vector<double> hubForceMomentMapped(6,0.0);
+        for (size_t i=0 ; i < nPtsBlade; i++) {
+            computeEffForceMoment( &(brFSIdata_.bld_ld[(i+iStart)*6]), &(brFSIdata_.bld_ref_pos[(i+iStart)*6]), hubForceMomentMapped.data(), brFSIdata_.hub_ref_pos.data() );
+            for(size_t j=0; j < ndim; j++) // Add the moment manually
+                hubForceMomentMapped[3+j] += brFSIdata_.bld_ld[(i+iStart)*6+3+j];
+        }
+        std::cout << "Total force moment on the hub due to blade " << iBlade << std::endl;
+        std::cout << "Force = (";
+        for(size_t j=0; j < ndim; j++)
+            std::cout << hubForceMoment[j] << ", ";
+        std::cout << ") Moment = (" ;
+        for(size_t j=0; j < ndim; j++)
+            std::cout << hubForceMoment[3+j] << ", ";
+        std::cout << ")" << std::endl;
+        std::cout << "Total force moment on the hub from mapped load due to blade " << iBlade << std::endl;
+        std::cout << "Force = (";
+        for(size_t j=0; j < ndim; j++)
+            std::cout << hubForceMomentMapped[j] << ", ";
+        std::cout << ") Moment = (" ;
+        for(size_t j=0; j < ndim; j++)
+            std::cout << hubForceMomentMapped[3+j] << ", ";
+        std::cout << ")" << std::endl;
+
+        
+        iStart += nPtsBlade;
+    }
     
 }
 
+void fsiTurbine::computeHubForceMomentForPart(std::vector<double> & hubForceMoment, std::vector<double> & hubPos, stk::mesh::Part * part) {
+
+    const int ndim = meta_.spatial_dimension();
+    VectorFieldType* modelCoords = meta_.get_field<VectorFieldType>(stk::topology::NODE_RANK, "coordinates");
+    
+    stk::mesh::Selector sel(*part);
+    const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
+    for (auto b: bkts) {
+        for (size_t in=0; in < b->size(); in++) {            
+            auto node = (*b)[in];
+            double* xyz = stk::mesh::field_data(*modelCoords, node);
+            double* fsiForceNode = stk::mesh::field_data(*fsiForce_, node);
+            computeEffForceMoment(fsiForceNode, xyz, hubForceMoment.data(), hubPos.data());
+        }
+    }
+    
+}
+    
+//! Compute the effective force and moment at the OpenFAST mesh node for a given force at the CFD surface mesh node
+void fsiTurbine::computeEffForceMoment(double *forceCFD, double *xyzCFD, double *forceMomOF, double *xyzOF) {
+
+    const int ndim=3; //I don't see this ever being used in other situations
+    for(size_t j=0; j < ndim; j++) 
+        forceMomOF[j] += forceCFD[j];
+    forceMomOF[3] += (xyzCFD[1]-xyzOF[1])*forceCFD[2] - (xyzCFD[2]-xyzOF[2])*forceCFD[1] ;
+    forceMomOF[4] += (xyzCFD[2]-xyzOF[2])*forceCFD[0] - (xyzCFD[0]-xyzOF[0])*forceCFD[2] ;
+    forceMomOF[5] += (xyzCFD[0]-xyzOF[0])*forceCFD[1] - (xyzCFD[1]-xyzOF[1])*forceCFD[0] ;
+    
+}
+    
 //! Map the deflections from the openfast nodes to the turbine surface CFD mesh. Will call 'computeDisplacement' for each node on the turbine surface CFD mesh.
 void fsiTurbine::mapDisplacements() {
     
