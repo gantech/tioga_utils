@@ -157,7 +157,24 @@ void write_mesh(
       stkio.add_field(fh, *mesh_disp);
   }
 
-  
+  ScalarIntFieldType* twrLoadMap = meta.get_field<ScalarIntFieldType>(
+      stk::topology::NODE_RANK, "twr_load_map");
+  ScalarIntFieldType* bldLoadMap = meta.get_field<ScalarIntFieldType>(
+      stk::topology::NODE_RANK, "bld_load_map");
+  ScalarIntFieldType* twrDispMap = meta.get_field<ScalarIntFieldType>(
+      stk::topology::NODE_RANK, "twr_disp_map");
+  ScalarIntFieldType* bldDispMap = meta.get_field<ScalarIntFieldType>(
+      stk::topology::NODE_RANK, "bld_disp_map");
+  ScalarFieldType* twrDispMapInterp = meta.get_field<ScalarFieldType>(
+      stk::topology::NODE_RANK, "twr_disp_map_interp");
+  ScalarFieldType* bldDispMapInterp = meta.get_field<ScalarFieldType>(
+      stk::topology::NODE_RANK, "bld_disp_map_interp");
+  stkio.add_field(fh, *twrLoadMap);
+  stkio.add_field(fh, *bldLoadMap);
+  stkio.add_field(fh, *twrDispMap);
+  stkio.add_field(fh, *bldDispMap);
+  stkio.add_field(fh, *twrDispMapInterp);
+  stkio.add_field(fh, *bldDispMapInterp);
 
   stkio.begin_output_step(fh, time);
   stkio.write_defined_output_fields(fh);

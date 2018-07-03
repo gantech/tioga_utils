@@ -168,9 +168,6 @@ void OpenfastFSI::load(const YAML::Node& node)
         partNames_ = fparts.as<std::vector<std::string>>();
     }
     
-    assert(axis_.size() == 3);
-    assert(origin_.size() == 3);
-
     FAST.setInputs(fi);
 
 }

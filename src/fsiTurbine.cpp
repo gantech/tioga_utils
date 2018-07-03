@@ -63,7 +63,6 @@ void fsiTurbine::setup() {
     fsiForce_ = meta_.get_field<VectorFieldType>(stk::topology::NODE_RANK, "fsi_force");
     if (fsiForce_ == NULL)
         throw std::runtime_error("fsiTurbine:: Cannot find NODE_RANK field named 'fsi_force'.");
-    
 
     twrPart_ = meta_.get_part(twrPartName_);
     if (twrPart_ == NULL)
@@ -78,12 +77,45 @@ void fsiTurbine::setup() {
         throw std::runtime_error("fsiTurbine:: No part found for mesh part corresponding to " + nacellePartName_);
     
     for (int i=0; i < nBlades_; i++) {
-        bladePartVec_[i] = meta_.get_part(nacellePartName_);
+        bladePartVec_[i] = meta_.get_part(bladePartNames_[i]);
         if (bladePartVec_[i] == NULL)
             throw std::runtime_error("fsiTurbine:: No part found for mesh part corresponding to " + bladePartNames_[i]);
         
     }
-        
+
+    twrLoadMap_ = meta_.get_field<ScalarIntFieldType>(stk::topology::NODE_RANK, "twr_load_map");
+    if (twrLoadMap_ == NULL)
+        twrLoadMap_ =  &(meta_.declare_field<ScalarIntFieldType>(stk::topology::NODE_RANK, "twr_load_map"));
+    stk::mesh::put_field(*twrLoadMap_, *twrPart_);
+
+    twrDispMap_ = meta_.get_field<ScalarIntFieldType>(stk::topology::NODE_RANK, "twr_disp_map");
+    if (twrDispMap_ == NULL)
+        twrDispMap_ =  &(meta_.declare_field<ScalarIntFieldType>(stk::topology::NODE_RANK, "twr_disp_map"));
+    stk::mesh::put_field(*twrDispMap_, *twrPart_);
+
+    twrDispMapInterp_ = meta_.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "twr_disp_map_interp");
+    if (twrDispMapInterp_ == NULL)
+        twrDispMapInterp_ =  &(meta_.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "twr_disp_map_interp"));
+    stk::mesh::put_field(*twrDispMapInterp_, *twrPart_);
+    
+    bldLoadMap_ = meta_.get_field<ScalarIntFieldType>(stk::topology::NODE_RANK, "bld_load_map");
+    if (bldLoadMap_ == NULL)
+        bldLoadMap_ =  &(meta_.declare_field<ScalarIntFieldType>(stk::topology::NODE_RANK, "bld_load_map"));
+    for (int i=0; i < nBlades_; i++)
+        stk::mesh::put_field(*bldLoadMap_, *bladePartVec_[i]);
+
+    bldDispMap_ = meta_.get_field<ScalarIntFieldType>(stk::topology::NODE_RANK, "bld_disp_map");
+    if (bldDispMap_ == NULL)
+        bldDispMap_ =  &(meta_.declare_field<ScalarIntFieldType>(stk::topology::NODE_RANK, "bld_disp_map"));
+    for (int i=0; i < nBlades_; i++)
+        stk::mesh::put_field(*bldDispMap_, *bladePartVec_[i]);
+
+    bldDispMapInterp_ = meta_.get_field<ScalarFieldType>(stk::topology::NODE_RANK, "bld_disp_map_interp");
+    if (bldDispMapInterp_ == NULL)
+        bldDispMapInterp_ =  &(meta_.declare_field<ScalarFieldType>(stk::topology::NODE_RANK, "bld_disp_map_interp"));
+    for (int i=0; i < nBlades_; i++)
+        stk::mesh::put_field(*bldDispMapInterp_, *bladePartVec_[i]);
+    
 }
 
 void fsiTurbine::initialize() {
@@ -149,8 +181,6 @@ void fsiTurbine::computeDisplacement() {
 //! Map each node on the turbine surface CFD mesh to 
 void fsiTurbine::computeMapping() {
 
-    std::cout << "Computing mapping" << std::endl ;
-    
     const int ndim = meta_.spatial_dimension();
     VectorFieldType* modelCoords = meta_.get_field<VectorFieldType>(
         stk::topology::NODE_RANK, "coordinates");
@@ -166,46 +196,54 @@ void fsiTurbine::computeMapping() {
             int* loadMapNode = stk::mesh::field_data(*twrLoadMap_, node);
             int* dispMapNode = stk::mesh::field_data(*twrDispMap_, node);
             double* dispMapInterpNode = stk::mesh::field_data(*twrDispMapInterp_, node);
-            std::vector<double> ptCoords(0.0, ndim);
+            std::vector<double> ptCoords(ndim, 0.0);
             for(int i=0; i < ndim; i++)
                 ptCoords[i] = xyz[i];
+            bool foundProj = false;
             double nDimCoord = -1.0;
             int nPtsTwr = params_.nBRfsiPtsTwr;
-            for (int i=0; i < nPtsTwr-1; i++) {
-                std::vector<double> lStart = {brFSIdata_.twr_ref_pos[i*6], brFSIdata_.twr_ref_pos[i*6+1], brFSIdata_.twr_ref_pos[i*6+2]};
-                std::vector<double> lEnd = {brFSIdata_.twr_ref_pos[(i+1)*6], brFSIdata_.twr_ref_pos[(i+1)*6+1], brFSIdata_.twr_ref_pos[(i+1)*6+2]};
-                nDimCoord = projectPt2Line(ptCoords, lStart, lEnd);
-
-                if ((nDimCoord > 0) && (nDimCoord < 1.0)) {
-                    *dispMapInterpNode = nDimCoord;
-                    *dispMapNode = i;
-                    *loadMapNode = i + std::round(nDimCoord);
-
-                    std::cout << "Projection found for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on the tower on turbine " + std::to_string(params_.TurbID) + ". OpenFAST mesh elment is (" + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Interpolation factor = " << nDimCoord << std::endl ;
-                    break;
+            if (nPtsTwr > 0) {
+                for (int i=0; i < nPtsTwr-1; i++) {
+                    std::vector<double> lStart = {brFSIdata_.twr_ref_pos[i*6], brFSIdata_.twr_ref_pos[i*6+1], brFSIdata_.twr_ref_pos[i*6+2]};
+                    std::vector<double> lEnd = {brFSIdata_.twr_ref_pos[(i+1)*6], brFSIdata_.twr_ref_pos[(i+1)*6+1], brFSIdata_.twr_ref_pos[(i+1)*6+2]};
+                    nDimCoord = projectPt2Line(ptCoords, lStart, lEnd);
+                    
+                    if ((nDimCoord >= 0) && (nDimCoord <= 1.0)) {
+                        *dispMapInterpNode = nDimCoord;
+                        *dispMapNode = i;
+                        *loadMapNode = i + std::round(nDimCoord);
+                        foundProj = true;
+                        break;
+                    } 
                 }
-            }
-
-            //If no element in the OpenFAST mesh contains this node do some sanity check on the perpendicular distance between the surface mesh node and the line joining the ends of the tower
-            if (nDimCoord < 1.0)  {
-                std::vector<double> lStart = {brFSIdata_.twr_ref_pos[0], brFSIdata_.twr_ref_pos[1], brFSIdata_.twr_ref_pos[2]};
-                std::vector<double> lEnd = {brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6], brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6+1], brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6+2]};
-                double perpDist = perpProjectDist_Pt2Line(ptCoords, lStart, lEnd);
-                if (perpDist > 0.2) {// Something's wrong if a node on the surface mesh of the tower is more than 20% of the tower length away from the tower axis. 
-                    throw std::runtime_error("Can't find a projection for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on the tower on turbine " + std::to_string(params_.TurbID) + ". The tower extends from " + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Are you sure the initial position and orientation of the mesh is consistent with the input file parameters and the OpenFAST model.");
-                } else { //Assign this node to the last point and element of the OpenFAST mesh
-                    *dispMapInterpNode = 1.0;
-                    *dispMapNode = nPtsTwr-2;
-                    *loadMapNode = nPtsTwr-1;
+                
+                //If no element in the OpenFAST mesh contains this node do some sanity check on the perpendicular distance between the surface mesh node and the line joining the ends of the tower
+                if (!foundProj) {
+                    if (nDimCoord < 0.0)  {
+                        std::vector<double> lStart = {brFSIdata_.twr_ref_pos[0], brFSIdata_.twr_ref_pos[1], brFSIdata_.twr_ref_pos[2]};
+                        std::vector<double> lEnd = {brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6], brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6+1], brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6+2]};
+                        double perpDist = perpProjectDist_Pt2Line(ptCoords, lStart, lEnd);
+                        if (perpDist > 0.2) {// Something's wrong if a node on the surface mesh of the tower is more than 20% of the tower length away from the tower axis. 
+                            throw std::runtime_error("Can't find a projection for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on the tower on turbine " + std::to_string(params_.TurbID) + ". The tower extends from " + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Are you sure the initial position and orientation of the mesh is consistent with the input file parameters and the OpenFAST model.");
+                        } else { //Assign this node to the first point and element of the OpenFAST mesh
+                            *dispMapInterpNode = 0.0;
+                            *dispMapNode = 0;
+                            *loadMapNode = 0;
+                        }
+                    } else if (nDimCoord > 1.0) { //Assign this node to the last point and element of the OpenFAST mesh
+                        *dispMapInterpNode = 1.0;
+                        *dispMapNode = nPtsTwr-2;
+                        *loadMapNode = nPtsTwr-1;
+                    }
                 }
             }
         }
     }
-
+    
     // Now the blades
     int nBlades = params_.numBlades;
-    for (int iBlade=0; iBlade < nBlades; iBlade++) {
-        int iStart = 0;
+    int iStart = 0;
+    for (int iBlade=0; iBlade < nBlades; iBlade++) {        
         int nPtsBlade = params_.nBRfsiPtsBlade[iBlade];        
         stk::mesh::Selector sel(*bladePartVec_[iBlade]);
         const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
@@ -217,39 +255,43 @@ void fsiTurbine::computeMapping() {
                 int* loadMapNode = stk::mesh::field_data(*bldLoadMap_, node);
                 int* dispMapNode = stk::mesh::field_data(*bldDispMap_, node);
                 double* dispMapInterpNode = stk::mesh::field_data(*bldDispMapInterp_, node);
-                std::vector<double> ptCoords(0.0, ndim);
+                std::vector<double> ptCoords(ndim, 0.0);
                 for(int i=0; i < ndim; i++)
                     ptCoords[i] = xyz[i];
+                bool foundProj = false;
                 double nDimCoord = -1.0;
                 for (int i=0; i < nPtsBlade-1; i++) {
                     std::vector<double> lStart = {brFSIdata_.bld_ref_pos[(iStart+i)*6], brFSIdata_.bld_ref_pos[(iStart+i)*6+1], brFSIdata_.bld_ref_pos[(iStart+i)*6+2]};
                     std::vector<double> lEnd = {brFSIdata_.bld_ref_pos[(iStart+i+1)*6], brFSIdata_.bld_ref_pos[(iStart+i+1)*6+1], brFSIdata_.bld_ref_pos[(iStart+i+1)*6+2]};
                     nDimCoord = projectPt2Line(ptCoords, lStart, lEnd);
                     
-                    if ((nDimCoord > 0) && (nDimCoord < 1.0)) {
+                    if ((nDimCoord >= 0) && (nDimCoord <= 1.0)) {
+                        foundProj = true;
                         *dispMapInterpNode = nDimCoord;
                         *dispMapNode = i;
                         *loadMapNode = i + std::round(nDimCoord);
-
-                        std::cout << "Projection found for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on the blade " << iBlade << " on turbine " + std::to_string(params_.TurbID) + ". OpenFAST mesh elment is (" + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Interpolation factor = " << nDimCoord << std::endl ;
-                        
                         break;
                     }
                 }
                 
                 //If no element in the OpenFAST mesh contains this node do some sanity check on the perpendicular distance between the surface mesh node and the line joining the ends of the blade
-                if (nDimCoord < 1.0)  {
-                    std::vector<double> lStart = {brFSIdata_.bld_ref_pos[iStart*6], brFSIdata_.bld_ref_pos[iStart*6+1], brFSIdata_.bld_ref_pos[iStart*6+2]};
-                    std::vector<double> lEnd = {brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6], brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6+1], brFSIdata_.twr_ref_pos[(iStart+nPtsBlade-1)*6+2]};
-                    double perpDist = perpProjectDist_Pt2Line(ptCoords, lStart, lEnd);
-                    if (perpDist > 0.2) {// Something's wrong if a node on the surface mesh of the blade is more than 20% of the blade length away from the blade axis. 
-                        throw std::runtime_error("Can't find a projection for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on blade " + std::to_string(iBlade) + " on turbine " + std::to_string(params_.TurbID) + ". The blade extends from " + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Are you sure the initial position and orientation of the mesh is consistent with the input file parameters and the OpenFAST model.");
-                    } else { //Assign this node to the last point and element of the OpenFAST mesh                        
+                if (!foundProj) {
+                    if (nDimCoord < 0.0)  {
+                        std::vector<double> lStart = {brFSIdata_.bld_ref_pos[iStart*6], brFSIdata_.bld_ref_pos[iStart*6+1], brFSIdata_.bld_ref_pos[iStart*6+2]};
+                        std::vector<double> lEnd = {brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6], brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6+1], brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6+2]};
+                        double perpDist = perpProjectDist_Pt2Line(ptCoords, lStart, lEnd);
+                        if (perpDist > 0.2) {// Something's wrong if a node on the surface mesh of the blade is more than 20% of the blade length away from the blade axis. 
+                            throw std::runtime_error("Can't find a projection for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on blade " + std::to_string(iBlade) + " on turbine " + std::to_string(params_.TurbID) + ". The blade extends from " + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Are you sure the initial position and orientation of the mesh is consistent with the input file parameters and the OpenFAST model.");
+                        } else { //Assign this node to the first point and element of the OpenFAST mesh
+                            *dispMapInterpNode = 0.0;
+                            *dispMapNode = 0;
+                            *loadMapNode = 0;
+                        }
+                    } else if (nDimCoord > 1.0) { //Assign this node to the last point and element of the OpenFAST mesh
                         *dispMapInterpNode = 1.0;
                         *dispMapNode = nPtsBlade-2;
                         *loadMapNode = nPtsBlade-1;
                     }
-                        
                 }
             }
         }
