@@ -45,9 +45,6 @@ public:
     //! Transfer the deflections from the openfast nodes to the turbine surface CFD mesh. Will call 'computeDisplacement' for each node on the turbine surface CFD mesh.
     void mapDisplacements();
     
-    //! Convert one array of 6 deflections (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational displacement at a given node on the turbine surface CFD mesh.
-    void computeDisplacement();
-
     //! Map each node on the turbine surface CFD mesh to 
     void computeMapping();
 
@@ -80,6 +77,30 @@ private:
 
     //! Compute the effective force and moment at the hub (can be any point) from a given mesh part
     void computeHubForceMomentForPart(std::vector<double> & hubForceMoment, std::vector<double> & hubPos, stk::mesh::Part * part);
+
+
+    //! Linearly interpolate dispInterp = dispStart + interpFac * (dispEnd - dispStart). Special considerations for Wiener-Milenkovic parameters
+    void linInterpTotDisplacement(double *dispStart, double *dispEnd, double interpFac, double * dispInterp);
+
+    //! Linearly interpolate between 3-dimensional vectors 'a' and 'b' with interpolating factor 'interpFac'
+    void linInterpVec(double * a, double * b, double interpFac, double * aInterpb);
+
+    /* Linearly interpolate the Wiener-Milenkovic parameters between 'qStart' and 'qEnd' into 'qInterp' with an interpolating factor 'interpFac'
+       see O.A.Bauchau, 2011, Flexible Multibody Dynamics p. 649, section 17.2, Algorithm 1'
+    */
+    void linInterpRotation(double * qStart, double * qEnd, double interpFac, double * qInterp);
+
+    //! Compose Wiener-Milenkovic parameters 'p' and 'q' into 'pPlusq'. If a transpose of 'p' is required, set tranposeP to '-1', else leave blank or set to '+1'
+    void composeWM(double * p, double * q, double * pPlusq, double transposeP=1.0);
+
+    //! Convert one array of 6 deflections (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational displacement at a given node on the turbine surface CFD mesh.
+    void computeDisplacement(double *totDispNode, double * xyzOF,  double *transDispNode, double * xyzCFD);
+
+    // Return the dot product of 3-dimensional vectors 'a' and 'b'
+    double dot(double * a, double * b);
+
+    // Compute the cross product of 3-dimensional vectors 'a' and 'b' into 'aCrossb'
+    void cross(double * a, double * b, double * aCrossb);
 
     stk::mesh::MetaData& meta_;
     stk::mesh::BulkData& bulk_;

@@ -268,11 +268,143 @@ void fsiTurbine::mapDisplacements() {
     // (1-m) * bld_def[k][j*6+2] + m * bld_def[k][(j+1)*6+2]
 
     //TODO: When the turbine is rotating, displacement of the surface of the blades and hub (not the nacelle and tower) should be split into a rigid body motion due to the rotation of the turbine, yawing of the turbine and a deflection of the structure itself. The yaw rate and rotation rate will vary over time. OpenFAST always stores the displacements of all nodes with respect to the reference configuration. When using a sliding mesh interface (yaw = 0), the mesh blocks inside the rotating part of the sliding interface should be moved with rigid body motion corresponding to the rotation rate first and then a second mesh deformation procedure should be performed to apply the remaining structural deflection. Figure out how to do this.
+
+    const int ndim = meta_.spatial_dimension();
+    VectorFieldType* modelCoords = meta_.get_field<VectorFieldType>(
+        stk::topology::NODE_RANK, "coordinates");
+    VectorFieldType* displacement = meta_.get_field<VectorFieldType>(
+        stk::topology::NODE_RANK, "mesh_displacement");
+
+    std::vector<double> totDispNode(6,0.0); // Total displacement at any node in (transX, transY, transZ, rotX, rotY, rotZ)
+    std::vector<double> tmpNodePos(3,0.0); // Vector to temporarily store a position vector
+    
+    //Do the tower first
+    stk::mesh::Selector sel(*twrPart_);
+    const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
+
+    for (auto b: bkts) {
+        for (size_t in=0; in < b->size(); in++) {
+            auto node = (*b)[in];
+            double* oldxyz = stk::mesh::field_data(*modelCoords, node);
+            double *dx = stk::mesh::field_data(*displacement, node);
+            int* dispMapNode = stk::mesh::field_data(*twrDispMap_, node);
+            double* dispMapInterpNode = stk::mesh::field_data(*twrDispMapInterp_, node);
+
+            //Find the interpolated reference position first
+            linInterpVec(&brFSIdata_.twr_ref_pos[(*dispMapNode)*6], &brFSIdata_.twr_ref_pos[(*dispMapNode + 1)*6], *dispMapInterpNode, tmpNodePos.data());
+
+            //Now linearly interpolate the deflections to the intermediate location
+            linInterpTotDisplacement(&brFSIdata_.twr_def[(*dispMapNode)*6], &brFSIdata_.twr_def[(*dispMapNode + 1)*6], *dispMapInterpNode, totDispNode.data());
+
+            //Now transfer the interpolated displacement to the CFD mesh node
+            computeDisplacement(totDispNode.data(), tmpNodePos.data(), dx, oldxyz);
+            
+        }
+    }
+
+
+    // Now the blades
+    int nBlades = params_.numBlades;
+    int iStart = 0;
+    for (int iBlade=0; iBlade < nBlades; iBlade++) {        
+        int nPtsBlade = params_.nBRfsiPtsBlade[iBlade];        
+        stk::mesh::Selector sel(*bladePartVec_[iBlade]);
+        const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
+
+        for (auto b: bkts) {
+            for (size_t in=0; in < b->size(); in++) {
+                auto node = (*b)[in];
+                double* oldxyz = stk::mesh::field_data(*modelCoords, node);
+                double *dx = stk::mesh::field_data(*displacement, node);
+                int* dispMapNode = stk::mesh::field_data(*bldDispMap_, node);
+                double* dispMapInterpNode = stk::mesh::field_data(*bldDispMapInterp_, node);
+                
+                //Find the interpolated reference position first
+                linInterpVec(&brFSIdata_.bld_ref_pos[(*dispMapNode + iStart)*6], &brFSIdata_.bld_ref_pos[(*dispMapNode + iStart + 1)*6], *dispMapInterpNode, tmpNodePos.data());
+                
+                //Now linearly interpolate the deflections to the intermediate location
+                linInterpTotDisplacement(&brFSIdata_.bld_def[(*dispMapNode + iStart)*6], &brFSIdata_.bld_def[(*dispMapNode + iStart + 1)*6], *dispMapInterpNode, totDispNode.data());
+                
+                //Now transfer the interpolated displacement to the CFD mesh node
+                computeDisplacement(totDispNode.data(), tmpNodePos.data(), dx, oldxyz);
+                
+            }
+        }
+        iStart += nPtsBlade;
+    }
+    
 }
 
-//! Convert one array of 6 deflections (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational displacement at a given node on the turbine surface CFD mesh.
-void fsiTurbine::computeDisplacement() {
+//! Linearly interpolate dispInterp = dispStart + interpFac * (dispEnd - dispStart). Special considerations for Wiener-Milenkovic parameters
+void fsiTurbine::linInterpTotDisplacement(double *dispStart, double *dispEnd, double interpFac, double * dispInterp) {
 
+    // Handle the translational displacement first
+    linInterpVec(dispStart, dispEnd, interpFac, dispInterp);
+    // Now deal with the rotational displacement
+    linInterpRotation( &dispStart[3], &dispEnd[3], interpFac, &dispInterp[3]);
+    
+}
+
+//! Linearly interpolate between 3-dimensional vectors 'a' and 'b' with interpolating factor 'interpFac'
+void fsiTurbine::linInterpVec(double * a, double * b, double interpFac, double * aInterpb) {
+
+    for (size_t i=0; i < 3; i++)
+        aInterpb[i] = a[i] + interpFac * (b[i] - a[i]);
+    
+}
+    
+/* Linearly interpolate the Wiener-Milenkovic parameters between 'qStart' and 'qEnd' into 'qInterp' with an interpolating factor 'interpFac'
+    see O.A.Bauchau, 2011, Flexible Multibody Dynamics p. 649, section 17.2, Algorithm 1'
+*/
+void fsiTurbine::linInterpRotation(double * qStart, double * qEnd, double interpFac, double * qInterp) {
+
+    std::vector<double> intermedQ(3,0.0);
+    composeWM(qStart, qEnd, intermedQ.data(), -1.0); //Remove rigid body rotation of qStart
+    for(size_t i=0; i < 3; i++)
+        qInterp[i] = interpFac * intermedQ[i]; // Do the interpolation
+    composeWM(qStart, intermedQ.data(), qInterp); // Add rigid body rotation of qStart back
+    
+}
+
+//! Compose Wiener-Milenkovic parameters 'p' and 'q' into 'pPlusq'. If a transpose of 'p' is required, set tranposeP to '-1', else leave blank or set to '+1'
+void fsiTurbine::composeWM(double * p, double * q, double * pPlusq, double transposeP) {
+        
+    double p0 = 2.0 - 0.125*dot(p,p);
+    double q0 = 2.0 - 0.125*dot(q,q);
+    std::vector<double> pCrossq(3,0.0);
+    cross(p, q, pCrossq.data());
+
+    double delta1 = (4.0-p0)*(4.0-q0);
+    double delta2 = p0*q0 - transposeP*dot(p,q);
+    double premultFac = 0.0;
+    if (delta2 < 0)
+        premultFac = 4.0/(delta1 - delta2);
+    else
+        premultFac = 4.0/(delta1 + delta2);
+
+    for (size_t i=0; i < 3; i++)
+        pPlusq[i] = premultFac * (p0 * q[i] + transposeP * (q0 * p[i] + pCrossq[i]) );
+    
+}
+    
+double fsiTurbine::dot(double * a, double * b) {
+
+    return (a[0]*b[0] + a[1]*b[1] + a[2]*b[2]);
+    
+}
+
+void fsiTurbine::cross(double * a, double * b, double * aCrossb) {
+
+    aCrossb[0] = a[1]*b[2] - a[2]*b[1];
+    aCrossb[1] = a[2]*b[0] - a[0]*b[2];
+    aCrossb[2] = a[0]*b[1] - a[1]*b[0];
+    
+}
+    
+//! Convert one array of 6 deflections (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational displacement at a given node on the turbine surface CFD mesh.
+void fsiTurbine::computeDisplacement(double *totDispNode, double * xyzOF,  double *transDispNode, double * xyzCFD) {
+
+    //TODO: implement this function
     
 }
 
