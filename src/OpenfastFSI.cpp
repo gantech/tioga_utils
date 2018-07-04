@@ -225,7 +225,6 @@ void OpenfastFSI::compute_mapping() {
 void OpenfastFSI::execute(double current_time)
 {
 
-    //TODO: Grab deformations from OpenFAST and apply deformations to CFD mesh here
     deform_mesh(current_time);
     //In Nalu - the CFD time step should ideally be performed here. 
     send_loads();
@@ -265,7 +264,18 @@ void OpenfastFSI::get_displacements() {
 void OpenfastFSI::deform_mesh(double current_time)
 {
 
+    std::cout << "Getting displacements from OpenFAST" << std::endl ;
     get_displacements(); // Get displacements from the OpenFAST - C++ API
+
+    int nTurbinesGlob = FAST.get_nTurbinesGlob();
+    for (int i=0; i < nTurbinesGlob; i++) {
+        if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation {
+            std::cout << "Setting sample displacements " << std::endl ;            
+            fsiTurbineData_[i]->setSampleDisplacement();
+            std::cout << "Mapping displacements " << std::endl ;            
+            fsiTurbineData_[i]->mapDisplacements();
+        }
+    }
     
     const int ndim = meta_.spatial_dimension();
     VectorFieldType* modelCoords = meta_.get_field<VectorFieldType>(

@@ -1,6 +1,7 @@
 #include "fsiTurbine.h"
 
 #include "stk_mesh/base/Field.hpp"
+#include <cmath>
 
 namespace tioga_nalu {
 
@@ -256,7 +257,38 @@ void fsiTurbine::computeEffForceMoment(double *forceCFD, double *xyzCFD, double 
     forceMomOF[5] += (xyzCFD[0]-xyzOF[0])*forceCFD[1] - (xyzCFD[1]-xyzOF[1])*forceCFD[0] ;
     
 }
+
+//! Set sample displacement on the OpenFAST mesh before mapping to the turbine blade surface mesh
+void fsiTurbine::setSampleDisplacement() {
+
+    //For each node on the openfast blade1 mesh - compute distance from the blade root node. Apply a rotation varying as the square of the distance between 0 - 45 degrees about the [0 1 0] axis. Apply a translation displacement that produces a tip displacement of 5m
+    int iBlade = 0;
+    int nPtsBlade = params_.nBRfsiPtsBlade[iBlade];
+    for (size_t i=0; i < nPtsBlade; i++) {
+        double rDistSq = calcDistanceSquared(&(brFSIdata_.bld_ref_pos[i*6]), &(brFSIdata_.bld_ref_pos[0]) )/10000.0;
+        //Set rotational displacement
+        double rot = 4.0*tan(0.25 * (45.0 * M_PI / 180.0) * rDistSq); // 4.0 * tan(phi/4.0) parameter for Wiener-Milenkovic
+        std::vector<double> wmRot = {0.0, rot, 0.0}; //Wiener-Milenkovic parameter
+        composeWM(&(brFSIdata_.hub_ref_pos[3]), wmRot.data(), &(brFSIdata_.bld_def[i*6+3])); //Compose with hub orientation
+        //Set translational displacement
+        double xDisp = rDistSq * 5.0;
+        brFSIdata_.bld_def[i*6+0] = xDisp;
+        std::cout << "Translation at blade 1 node " << i << " " << brFSIdata_.bld_def[i*6] << std::endl ;
+        std::cout << "Rotation at blade 1 node " << i << " " << 45.0 * rDistSq << std::endl ;
+        std::cout << "                                    = (" << brFSIdata_.bld_def[i*6+3] << "," << brFSIdata_.bld_def[i*6+4] << "," << brFSIdata_.bld_def[i*6+5] << ")" << std::endl ;
+    }
+}
+
+//! Calculate the distance between 3-dimensional vectors 'a' and 'b'
+double fsiTurbine::calcDistanceSquared(double * a, double * b) {
+
+    double dist = 0.0;
+    for(size_t i=0; i < 3; i++)
+        dist += (a[i]-b[i])*(a[i]-b[i]);
+    return dist;
     
+}
+
 //! Map the deflections from the openfast nodes to the turbine surface CFD mesh. Will call 'computeDisplacement' for each node on the turbine surface CFD mesh.
 void fsiTurbine::mapDisplacements() {
     
@@ -404,7 +436,33 @@ void fsiTurbine::cross(double * a, double * b, double * aCrossb) {
 //! Convert one array of 6 deflections (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational displacement at a given node on the turbine surface CFD mesh.
 void fsiTurbine::computeDisplacement(double *totDispNode, double * xyzOF,  double *transDispNode, double * xyzCFD) {
 
-    //TODO: implement this function
+    std::vector<double> r(3,0.0); //Get the relative distance between xyzOF and xyzCFD
+    for (size_t i=0; i < 3; i++)
+        r[i] = xyzCFD[i] - xyzOF[i];
+
+    std::vector<double> rRot(3,0.0);
+    applyWMrotation(&(totDispNode[3]), r.data(), rRot.data()); // Apply the Wiener-Milenkovic rotation to the
+
+    std::cout << "Translational displacement is " << totDispNode[0] << "," << totDispNode[1] << "," << totDispNode[2] << std::endl ;
+    std::cout << "Rotational displacement is " << rRot[0] - r[0] << "," << rRot[1] - r[1] << "," << rRot[2] - r[2] << std::endl ;
+    for (size_t i=0; i < 3; i++)
+        transDispNode[i] = totDispNode[i] + rRot[i] - r[i];
+    
+}
+
+//! Apply a Wiener-Milenkovic rotation 'wm' to a vector 'r' into 'rRot'
+void fsiTurbine::applyWMrotation(double * wm, double * r, double *rRot) {
+
+    double wm0 = 2.0-0.125*dot(wm, wm);
+    double nu = 2.0/(4.0-wm0);
+    double cosPhiO2 = 0.5*wm0*nu;
+    std::vector<double> wmCrossR(3,0.0);
+    cross(wm, r, wmCrossR.data());
+    std::vector<double> wmCrosswmCrossR(3,0.0);
+    cross(wm, wmCrossR.data(), wmCrosswmCrossR.data());
+    
+    for(size_t i=0; i < 3; i++)
+        rRot[i] = r[i] + nu * cosPhiO2 * wmCrossR[i] + 0.5 * nu * nu * wmCrosswmCrossR[i];
     
 }
 

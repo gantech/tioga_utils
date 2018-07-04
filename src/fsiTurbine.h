@@ -41,13 +41,15 @@ public:
 
     //! Map loads from the "fsiForce" field on the turbine surface CFD mesh into point load array that gets transferred to openfast
     void mapLoads();
-    
+
     //! Transfer the deflections from the openfast nodes to the turbine surface CFD mesh. Will call 'computeDisplacement' for each node on the turbine surface CFD mesh.
     void mapDisplacements();
     
     //! Map each node on the turbine surface CFD mesh to 
     void computeMapping();
 
+    //! Set sample displacement on the OpenFAST mesh before mapping to the turbine blade surface mesh
+    void setSampleDisplacement();
 
     fast::turbineDataType params_;
     fast::turbBRfsiDataType brFSIdata_;
@@ -96,6 +98,12 @@ private:
     //! Convert one array of 6 deflections (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational displacement at a given node on the turbine surface CFD mesh.
     void computeDisplacement(double *totDispNode, double * xyzOF,  double *transDispNode, double * xyzCFD);
 
+    //! Apply a Wiener-Milenkovic rotation 'wm' to a vector 'r' into 'rRot'
+    void applyWMrotation(double * wm, double * r, double *rRot);
+    
+    //! Calculate the distance between 3-dimensional vectors 'a' and 'b'
+    double calcDistanceSquared(double * a, double * b);
+        
     // Return the dot product of 3-dimensional vectors 'a' and 'b'
     double dot(double * a, double * b);
 

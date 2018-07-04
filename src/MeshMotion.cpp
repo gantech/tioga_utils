@@ -125,13 +125,11 @@ void MeshMotion::create_sample_force_field() {
     for (std::vector<std::string>::iterator it = bladePartNameVec.begin() ; it != bladePartNameVec.end(); ++it) {
         auto * part = meta_.get_part(*it);
         stk::mesh::Selector sel(*part);
-        std::cout << "Setting force at nodes " << std::endl ;        
         const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
         for (auto b: bkts) {
             for (size_t in=0; in < b->size(); in++) {
                 auto node = (*b)[in];
                 double *fsiForceNode = stk::mesh::field_data(*fsiForce, node);
-                std::cout << "Setting force at node " << in << std::endl ;
                 fsiForceNode[0] = 2.3573785950023575e-05;
             }
         }
