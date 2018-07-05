@@ -306,6 +306,8 @@ void fsiTurbine::mapDisplacements() {
         stk::topology::NODE_RANK, "coordinates");
     VectorFieldType* displacement = meta_.get_field<VectorFieldType>(
         stk::topology::NODE_RANK, "mesh_displacement");
+    VectorFieldType* refDisplacement = meta_.get_field<VectorFieldType>(
+        stk::topology::NODE_RANK, "mesh_displacement_ref");
 
     std::vector<double> totDispNode(6,0.0); // Total displacement at any node in (transX, transY, transZ, rotX, rotY, rotZ)
     std::vector<double> tmpNodePos(3,0.0); // Vector to temporarily store a position vector
@@ -362,8 +364,13 @@ void fsiTurbine::mapDisplacements() {
                 
             }
         }
+
+        double errorNorm = compute_error_norm(displacement, refDisplacement, bladePartVec_[iBlade]);
+
+        std::cout << "Error in displacement for blade " << iBlade << " = " << errorNorm << std::endl ;
         iStart += nPtsBlade;
     }
+
     
 }
 
@@ -443,10 +450,35 @@ void fsiTurbine::computeDisplacement(double *totDispNode, double * xyzOF,  doubl
     std::vector<double> rRot(3,0.0);
     applyWMrotation(&(totDispNode[3]), r.data(), rRot.data()); // Apply the Wiener-Milenkovic rotation to the
 
-    std::cout << "Translational displacement is " << totDispNode[0] << "," << totDispNode[1] << "," << totDispNode[2] << std::endl ;
-    std::cout << "Rotational displacement is " << rRot[0] - r[0] << "," << rRot[1] - r[1] << "," << rRot[2] - r[2] << std::endl ;
     for (size_t i=0; i < 3; i++)
         transDispNode[i] = totDispNode[i] + rRot[i] - r[i];
+    
+}
+
+double fsiTurbine::compute_error_norm(VectorFieldType * vec, VectorFieldType * vec_ref, stk::mesh::Part * part) {
+
+    const int ndim = meta_.spatial_dimension();
+    double errorNorm = 0.0;
+    int nNodes = 0;
+    
+    stk::mesh::Selector sel(*part);
+    const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
+
+    for (auto b: bkts) {
+        for (size_t in=0; in < b->size(); in++) {
+            auto node = (*b)[in];
+            double* vecNode = stk::mesh::field_data(*vec, node);
+            double* vecRefNode = stk::mesh::field_data(*vec_ref, node);
+            for(size_t i=0; i < ndim; i++)
+                errorNorm += (vecNode[i] - vecRefNode[i])*(vecNode[i] - vecRefNode[i]);
+
+            nNodes++;
+        }
+    }
+
+    errorNorm = sqrt(errorNorm)/(nNodes*ndim);
+
+    return errorNorm;
     
 }
 

@@ -104,11 +104,14 @@ private:
     //! Calculate the distance between 3-dimensional vectors 'a' and 'b'
     double calcDistanceSquared(double * a, double * b);
         
-    // Return the dot product of 3-dimensional vectors 'a' and 'b'
+    //! Return the dot product of 3-dimensional vectors 'a' and 'b'
     double dot(double * a, double * b);
 
-    // Compute the cross product of 3-dimensional vectors 'a' and 'b' into 'aCrossb'
+    //! Compute the cross product of 3-dimensional vectors 'a' and 'b' into 'aCrossb'
     void cross(double * a, double * b, double * aCrossb);
+
+    //! Compute the error norm between two fields for a given part
+    double compute_error_norm(VectorFieldType * vec, VectorFieldType * vec_ref, stk::mesh::Part * part);
 
     stk::mesh::MetaData& meta_;
     stk::mesh::BulkData& bulk_;
