@@ -272,6 +272,8 @@ void OpenfastFSI::deform_mesh(double current_time)
         if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation {
             std::cout << "Setting sample displacements " << std::endl ;            
             fsiTurbineData_[i]->setSampleDisplacement();
+            std::cout << "Setting reference displacements " << std::endl ;
+            fsiTurbineData_[i]->setRefDisplacement();
             std::cout << "Mapping displacements " << std::endl ;            
             fsiTurbineData_[i]->mapDisplacements();
         }

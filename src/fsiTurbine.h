@@ -51,6 +51,9 @@ public:
     //! Set sample displacement on the OpenFAST mesh before mapping to the turbine blade surface mesh
     void setSampleDisplacement();
 
+    //! Set reference displacement on the turbine blade surface mesh, for comparison with Sample displacement set in setSampleDisplacement
+    void setRefDisplacement();
+
     fast::turbineDataType params_;
     fast::turbBRfsiDataType brFSIdata_;
     

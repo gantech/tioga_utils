@@ -279,6 +279,49 @@ void fsiTurbine::setSampleDisplacement() {
     }
 }
 
+//! Set reference displacement on the turbine blade surface mesh, for comparison with Sample displacement set in setSampleDisplacement
+void fsiTurbine::setRefDisplacement() {
+
+  // some hard coded parameters
+  std::vector<double> bl_ref_pos = {0.0, 0.0, 131.5}; // root of blade 1
+  double  tipdisp = 5.0;
+
+  // extract the vector field type set by this function
+  const int ndim = meta_.spatial_dimension();
+  VectorFieldType* modelCoords = meta_.get_field<VectorFieldType>(
+  stk::topology::NODE_RANK, "coordinates");
+  VectorFieldType* refDisp = meta_.get_field<VectorFieldType>(
+  stk::topology::NODE_RANK, "mesh_displacement_ref");
+
+  int iBlade = 0; // for testing purposes, we are doing this only for the first blade
+  stk::mesh::Selector sel(*bladePartVec_[iBlade]); // extract blade
+  const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel); // extract buckets for the blade
+
+  for (auto b: bkts) { // loop over number of buckets
+    for (size_t in=0; in < b->size(); in++) { // loop over all nodes in the bucket
+      auto node = (*b)[in];
+      double* xyz = stk::mesh::field_data(*modelCoords, node);
+      double* vecRefNode = stk::mesh::field_data(*refDisp, node); // extract
+
+      // Compute position of current node relative to blade root
+      double rDistSq = calcDistanceSquared( xyz, bl_ref_pos.data() )/10000.0;
+
+      //Set translational displacement
+      vecRefNode[0] = rDistSq * tipdisp;
+
+      double rot = 4.0*tan(0.25 * (45.0 * M_PI / 180.0) * rDistSq); // 4.0 * tan(phi/4.0) parameter for Wiener-Milenkovic
+      std::vector<double> wmRot = {0.0, rot, 0.0}; //Wiener-Milenkovic parameter
+
+      std::vector<double> r = {xyz[0], xyz[1], 0.0}; //Wiener-Milenkovic parameter
+      std::vector<double> r_rot(3,0.0);
+      applyWMrotation(r.data(), wmRot.data(), r_rot.data());
+
+      for(size_t i=0; i < ndim; i++ )
+        vecRefNode[i] = vecRefNode[i] + r_rot[i] - r[i];
+    }
+  }
+}
+
 //! Calculate the distance between 3-dimensional vectors 'a' and 'b'
 double fsiTurbine::calcDistanceSquared(double * a, double * b) {
 
