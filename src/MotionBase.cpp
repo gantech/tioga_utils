@@ -22,11 +22,14 @@ void MotionBase::setup()
         stk::topology::NODE_RANK, "current_coordinates");
     VectorFieldType& mesh_displacement = meta_.declare_field<VectorFieldType>(
         stk::topology::NODE_RANK, "mesh_displacement");
+    VectorFieldType& mesh_displacement_ref = meta_.declare_field<VectorFieldType>(
+        stk::topology::NODE_RANK, "mesh_displacement_ref");
 
     for (auto* p: partVec_) {
         stk::mesh::put_field(coordinates, *p);
         stk::mesh::put_field(current_coordinates, *p);
         stk::mesh::put_field(mesh_displacement, *p);
+        stk::mesh::put_field(mesh_displacement_ref, *p);
     }
 }
 
