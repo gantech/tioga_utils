@@ -393,7 +393,7 @@ void fsiTurbine::linInterpRotation(double * qStart, double * qEnd, double interp
     std::vector<double> intermedQ(3,0.0);
     composeWM(qStart, qEnd, intermedQ.data(), -1.0); //Remove rigid body rotation of qStart
     for(size_t i=0; i < 3; i++)
-        qInterp[i] = interpFac * intermedQ[i]; // Do the interpolation
+        intermedQ[i] = interpFac * intermedQ[i]; // Do the interpolation
     composeWM(qStart, intermedQ.data(), qInterp); // Add rigid body rotation of qStart back
     
 }
