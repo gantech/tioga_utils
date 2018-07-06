@@ -158,9 +158,31 @@ void fsiTurbine::mapLoads() {
 
     computeFSIforce();
 
+
+    //First zero out forces on the OpenFAST mesh
+    for (size_t i=0; i < params_.nBRfsiPtsTwr; i++) {
+        for (size_t j=0; j < 6; j++)
+            brFSIdata_.twr_ld[i*6+j] = 0.0;
+    }
+        
+    int nBlades = params_.numBlades;
+    int iRunTot = 0;
+    for (size_t iBlade=0; iBlade < nBlades; iBlade++) {
+        int nPtsBlade = params_.nBRfsiPtsBlade[iBlade];
+        for (size_t i=0; i < nPtsBlade; i++) {
+            for (size_t j=0; j < 6; j++)
+                brFSIdata_.bld_ld[iRunTot*6+j] = 0.0;
+            iRunTot++;
+        }
+            
+    }
+
+    // Now map loads
     const int ndim = meta_.spatial_dimension();
     VectorFieldType* modelCoords = meta_.get_field<VectorFieldType>(stk::topology::NODE_RANK, "coordinates");
 
+    std::vector<double> tmpNodePos(3,0.0); // Vector to temporarily store a position vector
+    
     // Do the tower first
     stk::mesh::Selector sel(*twrPart_);
     const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
@@ -169,16 +191,25 @@ void fsiTurbine::mapLoads() {
             auto node = (*b)[in];
             double* fsiForceNode = stk::mesh::field_data(*fsiForce_, node);
             double* xyz = stk::mesh::field_data(*modelCoords, node);
-            int* loadMapNode = stk::mesh::field_data(*twrLoadMap_, node);
-            computeEffForceMoment(fsiForceNode, xyz, &(brFSIdata_.twr_ld[(*loadMapNode)*6]), &(brFSIdata_.twr_ref_pos[(*loadMapNode)*6]));
+            int* mapNode = stk::mesh::field_data(*twrDispMap_, node);
+            double *mapInterpNode = stk::mesh::field_data(*twrDispMapInterp_, node);
+
+            //Find the interpolated reference position first
+            linInterpVec(&brFSIdata_.twr_ref_pos[(*mapNode)*6], &brFSIdata_.twr_ref_pos[(*mapNode + 1)*6], *mapInterpNode, tmpNodePos.data());
+
+            std::vector<double> tmpForceMoment(6,0.0); // Temporarily store total force and moment as (fX, fY, fZ, mX, mY, mZ)
+            //Now compute the force and moment on the interpolated reference position
+            computeEffForceMoment(fsiForceNode, xyz, tmpForceMoment.data(), tmpNodePos.data());
+
+            //Split the force and moment into the two surrounding nodes in a variationally consistent manner using the interpolation factor
+            splitForceMoment(tmpForceMoment.data(), *mapInterpNode, &(brFSIdata_.twr_ld[(*mapNode)*6]), &(brFSIdata_.twr_ld[(*mapNode+1)*6]));
+            
         }
     }
 
     // Now the blades
-    int nBlades = params_.numBlades;
     int iStart = 0;
     for (int iBlade=0; iBlade < nBlades; iBlade++) {
-        int totBladeNodes = 0;
         stk::mesh::Selector sel(*bladePartVec_[iBlade]);
         const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
         for (auto b: bkts) {
@@ -186,9 +217,19 @@ void fsiTurbine::mapLoads() {
                 auto node = (*b)[in];
                 double* fsiForceNode = stk::mesh::field_data(*fsiForce_, node);
                 double* xyz = stk::mesh::field_data(*modelCoords, node);
-                int* loadMapNode = stk::mesh::field_data(*bldLoadMap_, node);
-                computeEffForceMoment(fsiForceNode, xyz, &(brFSIdata_.bld_ld[(*loadMapNode + iStart)*6]), &(brFSIdata_.bld_ref_pos[(*loadMapNode + iStart)*6]));
-                totBladeNodes++ ;
+                int* mapNode = stk::mesh::field_data(*bldDispMap_, node);
+                double* mapInterpNode = stk::mesh::field_data(*bldDispMapInterp_, node);
+
+                //Find the interpolated reference position first
+                linInterpVec(&brFSIdata_.bld_ref_pos[(*mapNode + iStart)*6], &brFSIdata_.bld_ref_pos[(*mapNode + iStart + 1)*6], *mapInterpNode, tmpNodePos.data());
+
+                std::vector<double> tmpForceMoment(6,0.0); // Temporarily store total force and moment as (fX, fY, fZ, mX, mY, mZ)
+                //Now compute the force and moment on the interpolated reference position
+                computeEffForceMoment(fsiForceNode, xyz, tmpForceMoment.data(), tmpNodePos.data());
+
+                //Now split the force and moment on the interpolated reference position into the 'left' and 'right' nodes
+                splitForceMoment(tmpForceMoment.data(), *mapInterpNode, &(brFSIdata_.bld_ld[(*mapNode + iStart)*6]), &(brFSIdata_.bld_ld[(*mapNode + iStart + 1)*6]) );
+                
             }
         }
 
@@ -228,6 +269,17 @@ void fsiTurbine::mapLoads() {
     
 }
 
+//! Split a force and moment into the surrounding 'left' and 'right' nodes in a variationally consistent manner using 
+void fsiTurbine::splitForceMoment(double *totForceMoment, double interpFac, double *leftForceMoment, double *rightForceMoment) {
+
+    for(size_t i=0; i<6; i++) {
+        leftForceMoment[i] += (1.0 - interpFac) * totForceMoment[i];
+        rightForceMoment[i] += interpFac * totForceMoment[i];
+    }
+
+    
+}
+
 void fsiTurbine::computeHubForceMomentForPart(std::vector<double> & hubForceMoment, std::vector<double> & hubPos, stk::mesh::Part * part) {
 
     const int ndim = meta_.spatial_dimension();
@@ -264,22 +316,17 @@ void fsiTurbine::setSampleDisplacement() {
     //For each node on the openfast blade1 mesh - compute distance from the blade root node. Apply a rotation varying as the square of the distance between 0 - 45 degrees about the [0 1 0] axis. Apply a translation displacement that produces a tip displacement of 5m
     int iBlade = 0;
     int nPtsBlade = params_.nBRfsiPtsBlade[iBlade];
-    std::cout << "Blade root is " << brFSIdata_.bld_ref_pos[0] << " " << brFSIdata_.bld_ref_pos[1] << " " << brFSIdata_.bld_ref_pos[2] << std::endl ;
     for (size_t i=0; i < nPtsBlade; i++) {
         double rDistSq = calcDistanceSquared(&(brFSIdata_.bld_ref_pos[i*6]), &(brFSIdata_.bld_ref_pos[0]) )/10000.0;
         //Set rotational displacement
         double rot = 4.0*tan(0.25 * (45.0 * M_PI / 180.0) * rDistSq); // 4.0 * tan(phi/4.0) parameter for Wiener-Milenkovic
-        std::vector<double> wmRot = {0.0, rot, 0.0}; //Wiener-Milenkovic parameter
+        std::vector<double> wmRot = {rot, rot, 0.0}; //Wiener-Milenkovic parameter
         composeWM(&(brFSIdata_.hub_ref_pos[3]), wmRot.data(), &(brFSIdata_.bld_def[i*6+3])); //Compose with hub orientation
         //Set translational displacement
         double xDisp = rDistSq * 5.0;
         brFSIdata_.bld_def[i*6+0] = xDisp;
         brFSIdata_.bld_def[i*6+1] = 0.0;
         brFSIdata_.bld_def[i*6+2] = 0.0;
-        std::cout << "Blade 1 node = " << brFSIdata_.bld_ref_pos[i*6] << "," << brFSIdata_.bld_ref_pos[i*6+1] << "," << brFSIdata_.bld_ref_pos[i*6+2] << std::endl ;
-        std::cout << "Translation at blade 1 node " << i << " " << brFSIdata_.bld_def[i*6] << std::endl ;
-        std::cout << "Rotation at blade 1 node " << i << " " << 45.0 * rDistSq << std::endl ;
-        std::cout << "                                    = (" << brFSIdata_.bld_def[i*6+3] << "," << brFSIdata_.bld_def[i*6+4] << "," << brFSIdata_.bld_def[i*6+5] << ")" << std::endl ;
     }
 }
 

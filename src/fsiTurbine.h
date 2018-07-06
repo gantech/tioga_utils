@@ -101,6 +101,9 @@ private:
     //! Convert one array of 6 deflections (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational displacement at a given node on the turbine surface CFD mesh.
     void computeDisplacement(double *totDispNode, double * xyzOF,  double *transDispNode, double * xyzCFD);
 
+    //! Split a force and moment into the surrounding 'left' and 'right' nodes in a variationally consistent manner using interpFac
+    void splitForceMoment(double *totForceMoment, double interpFac, double *leftForceMoment, double *rightForceMoment);
+    
     //! Apply a Wiener-Milenkovic rotation 'wm' to a vector 'r' into 'rRot'
     void applyWMrotation(double * wm, double * r, double *rRot);
     
