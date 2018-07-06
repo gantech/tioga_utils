@@ -264,6 +264,7 @@ void fsiTurbine::setSampleDisplacement() {
     //For each node on the openfast blade1 mesh - compute distance from the blade root node. Apply a rotation varying as the square of the distance between 0 - 45 degrees about the [0 1 0] axis. Apply a translation displacement that produces a tip displacement of 5m
     int iBlade = 0;
     int nPtsBlade = params_.nBRfsiPtsBlade[iBlade];
+    std::cout << "Blade root is " << brFSIdata_.bld_ref_pos[0] << " " << brFSIdata_.bld_ref_pos[1] << " " << brFSIdata_.bld_ref_pos[2] << std::endl ;
     for (size_t i=0; i < nPtsBlade; i++) {
         double rDistSq = calcDistanceSquared(&(brFSIdata_.bld_ref_pos[i*6]), &(brFSIdata_.bld_ref_pos[0]) )/10000.0;
         //Set rotational displacement
@@ -273,6 +274,9 @@ void fsiTurbine::setSampleDisplacement() {
         //Set translational displacement
         double xDisp = rDistSq * 5.0;
         brFSIdata_.bld_def[i*6+0] = xDisp;
+        brFSIdata_.bld_def[i*6+1] = 0.0;
+        brFSIdata_.bld_def[i*6+2] = 0.0;
+        std::cout << "Blade 1 node = " << brFSIdata_.bld_ref_pos[i*6] << "," << brFSIdata_.bld_ref_pos[i*6+1] << "," << brFSIdata_.bld_ref_pos[i*6+2] << std::endl ;
         std::cout << "Translation at blade 1 node " << i << " " << brFSIdata_.bld_def[i*6] << std::endl ;
         std::cout << "Rotation at blade 1 node " << i << " " << 45.0 * rDistSq << std::endl ;
         std::cout << "                                    = (" << brFSIdata_.bld_def[i*6+3] << "," << brFSIdata_.bld_def[i*6+4] << "," << brFSIdata_.bld_def[i*6+5] << ")" << std::endl ;
@@ -308,13 +312,15 @@ void fsiTurbine::setRefDisplacement() {
 
       //Set translational displacement
       vecRefNode[0] = rDistSq * tipdisp;
+      vecRefNode[1] = 0.0;
+      vecRefNode[2] = 0.0;
 
       double rot = 4.0*tan(0.25 * (45.0 * M_PI / 180.0) * rDistSq); // 4.0 * tan(phi/4.0) parameter for Wiener-Milenkovic
       std::vector<double> wmRot = {0.0, rot, 0.0}; //Wiener-Milenkovic parameter
 
       std::vector<double> r = {xyz[0], xyz[1], 0.0}; //Wiener-Milenkovic parameter
       std::vector<double> r_rot(3,0.0);
-      applyWMrotation(r.data(), wmRot.data(), r_rot.data());
+      applyWMrotation(wmRot.data(), r.data(), r_rot.data());
 
       for(size_t i=0; i < ndim; i++ )
         vecRefNode[i] = vecRefNode[i] + r_rot[i] - r[i];
@@ -501,7 +507,7 @@ void fsiTurbine::computeDisplacement(double *totDispNode, double * xyzOF,  doubl
 double fsiTurbine::compute_error_norm(VectorFieldType * vec, VectorFieldType * vec_ref, stk::mesh::Part * part) {
 
     const int ndim = meta_.spatial_dimension();
-    double errorNorm = 0.0;
+    std::vector<double> errorNorm(3,0);
     int nNodes = 0;
     
     stk::mesh::Selector sel(*part);
@@ -513,15 +519,16 @@ double fsiTurbine::compute_error_norm(VectorFieldType * vec, VectorFieldType * v
             double* vecNode = stk::mesh::field_data(*vec, node);
             double* vecRefNode = stk::mesh::field_data(*vec_ref, node);
             for(size_t i=0; i < ndim; i++)
-                errorNorm += (vecNode[i] - vecRefNode[i])*(vecNode[i] - vecRefNode[i]);
+                errorNorm[i] += (vecNode[i] - vecRefNode[i])*(vecNode[i] - vecRefNode[i]);
 
             nNodes++;
         }
     }
 
-    errorNorm = sqrt(errorNorm)/(nNodes*ndim);
+    for (size_t i=0; i < ndim; i++)
+        errorNorm[i] = sqrt(errorNorm[i]/nNodes);
 
-    return errorNorm;
+    return errorNorm[0];
     
 }
 
@@ -582,17 +589,17 @@ void fsiTurbine::computeMapping() {
                 
                 //If no element in the OpenFAST mesh contains this node do some sanity check on the perpendicular distance between the surface mesh node and the line joining the ends of the tower
                 if (!foundProj) {
+                    std::vector<double> lStart = {brFSIdata_.twr_ref_pos[0], brFSIdata_.twr_ref_pos[1], brFSIdata_.twr_ref_pos[2]};
+                    std::vector<double> lEnd = {brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6], brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6+1], brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6+2]};
+                    double perpDist = perpProjectDist_Pt2Line(ptCoords, lStart, lEnd);
+                    if (perpDist > 0.2) {// Something's wrong if a node on the surface mesh of the tower is more than 20% of the tower length away from the tower axis. 
+                        throw std::runtime_error("Can't find a projection for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on the tower on turbine " + std::to_string(params_.TurbID) + ". The tower extends from " + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Are you sure the initial position and orientation of the mesh is consistent with the input file parameters and the OpenFAST model.");
+                    }                
                     if (nDimCoord < 0.0)  {
-                        std::vector<double> lStart = {brFSIdata_.twr_ref_pos[0], brFSIdata_.twr_ref_pos[1], brFSIdata_.twr_ref_pos[2]};
-                        std::vector<double> lEnd = {brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6], brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6+1], brFSIdata_.twr_ref_pos[(nPtsTwr-1)*6+2]};
-                        double perpDist = perpProjectDist_Pt2Line(ptCoords, lStart, lEnd);
-                        if (perpDist > 0.2) {// Something's wrong if a node on the surface mesh of the tower is more than 20% of the tower length away from the tower axis. 
-                            throw std::runtime_error("Can't find a projection for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on the tower on turbine " + std::to_string(params_.TurbID) + ". The tower extends from " + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Are you sure the initial position and orientation of the mesh is consistent with the input file parameters and the OpenFAST model.");
-                        } else { //Assign this node to the first point and element of the OpenFAST mesh
-                            *dispMapInterpNode = 0.0;
-                            *dispMapNode = 0;
-                            *loadMapNode = 0;
-                        }
+                        //Assign this node to the first point and element of the OpenFAST mesh
+                        *dispMapInterpNode = 0.0;
+                        *dispMapNode = 0;
+                        *loadMapNode = 0;
                     } else if (nDimCoord > 1.0) { //Assign this node to the last point and element of the OpenFAST mesh
                         *dispMapInterpNode = 1.0;
                         *dispMapNode = nPtsTwr-2;
@@ -639,17 +646,18 @@ void fsiTurbine::computeMapping() {
                 
                 //If no element in the OpenFAST mesh contains this node do some sanity check on the perpendicular distance between the surface mesh node and the line joining the ends of the blade
                 if (!foundProj) {
+                    std::vector<double> lStart = {brFSIdata_.bld_ref_pos[iStart*6], brFSIdata_.bld_ref_pos[iStart*6+1], brFSIdata_.bld_ref_pos[iStart*6+2]};
+                    std::vector<double> lEnd = {brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6], brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6+1], brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6+2]};
+                    double perpDist = perpProjectDist_Pt2Line(ptCoords, lStart, lEnd);
+                    if (perpDist > 0.2) {// Something's wrong if a node on the surface mesh of the blade is more than 20% of the blade length away from the blade axis. 
+                        throw std::runtime_error("Can't find a projection for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on blade " + std::to_string(iBlade) + " on turbine " + std::to_string(params_.TurbID) + ". The blade extends from " + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Are you sure the initial position and orientation of the mesh is consistent with the input file parameters and the OpenFAST model.");
+                    }
+                    
                     if (nDimCoord < 0.0)  {
-                        std::vector<double> lStart = {brFSIdata_.bld_ref_pos[iStart*6], brFSIdata_.bld_ref_pos[iStart*6+1], brFSIdata_.bld_ref_pos[iStart*6+2]};
-                        std::vector<double> lEnd = {brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6], brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6+1], brFSIdata_.bld_ref_pos[(iStart+nPtsBlade-1)*6+2]};
-                        double perpDist = perpProjectDist_Pt2Line(ptCoords, lStart, lEnd);
-                        if (perpDist > 0.2) {// Something's wrong if a node on the surface mesh of the blade is more than 20% of the blade length away from the blade axis. 
-                            throw std::runtime_error("Can't find a projection for point (" + std::to_string(ptCoords[0]) + "," + std::to_string(ptCoords[1]) + "," + std::to_string(ptCoords[2]) + ") on blade " + std::to_string(iBlade) + " on turbine " + std::to_string(params_.TurbID) + ". The blade extends from " + std::to_string(lStart[0]) + "," + std::to_string(lStart[1]) + "," + std::to_string(lStart[2]) + ") to " + std::to_string(lEnd[0]) + "," + std::to_string(lEnd[1]) + "," + std::to_string(lEnd[2]) + "). Are you sure the initial position and orientation of the mesh is consistent with the input file parameters and the OpenFAST model.");
-                        } else { //Assign this node to the first point and element of the OpenFAST mesh
+                        //Assign this node to the first point and element of the OpenFAST mesh
                             *dispMapInterpNode = 0.0;
                             *dispMapNode = 0;
                             *loadMapNode = 0;
-                        }
                     } else if (nDimCoord > 1.0) { //Assign this node to the last point and element of the OpenFAST mesh
                         *dispMapInterpNode = 1.0;
                         *dispMapNode = nPtsBlade-2;

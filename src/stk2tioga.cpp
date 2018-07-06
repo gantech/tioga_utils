@@ -155,6 +155,10 @@ void write_mesh(
       VectorFieldType* mesh_disp = meta.get_field<VectorFieldType>(
           stk::topology::NODE_RANK, "mesh_displacement");
       stkio.add_field(fh, *mesh_disp);
+      VectorFieldType* mesh_disp_ref = meta.get_field<VectorFieldType>(
+          stk::topology::NODE_RANK, "mesh_displacement_ref");
+      stkio.add_field(fh, *mesh_disp_ref);
+      
   }
 
   ScalarIntFieldType* twrLoadMap = meta.get_field<ScalarIntFieldType>(
