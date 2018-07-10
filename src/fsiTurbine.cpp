@@ -420,9 +420,12 @@ void fsiTurbine::mapDisplacements() {
         stk::topology::NODE_RANK, "mesh_displacement");
     VectorFieldType* refDisplacement = meta_.get_field<VectorFieldType>(
         stk::topology::NODE_RANK, "mesh_displacement_ref");
+    VectorFieldType* meshVelocity = meta_.get_field<VectorFieldType>(
+        stk::topology::NODE_RANK, "mesh_velocity");
 
     std::vector<double> totDispNode(6,0.0); // Total displacement at any node in (transX, transY, transZ, rotX, rotY, rotZ)
-    std::vector<double> tmpNodePos(3,0.0); // Vector to temporarily store a position vector
+    std::vector<double> totVelNode(6,0.0); // Total velocity at any node in (transX, transY, transZ, rotX, rotY, rotZ)
+    std::vector<double> tmpNodePos(6,0.0); // Vector to temporarily store a position and orientation vector
     
     //Do the tower first
     stk::mesh::Selector sel(*twrPart_);
@@ -435,15 +438,22 @@ void fsiTurbine::mapDisplacements() {
             double *dx = stk::mesh::field_data(*displacement, node);
             int* dispMapNode = stk::mesh::field_data(*twrDispMap_, node);
             double* dispMapInterpNode = stk::mesh::field_data(*twrDispMapInterp_, node);
-
+            double *mVel = stk::mesh::field_data(*meshVelocity, node);
+            
             //Find the interpolated reference position first
-            linInterpVec(&brFSIdata_.twr_ref_pos[(*dispMapNode)*6], &brFSIdata_.twr_ref_pos[(*dispMapNode + 1)*6], *dispMapInterpNode, tmpNodePos.data());
+            linInterpTotDisplacement(&brFSIdata_.twr_ref_pos[(*dispMapNode)*6], &brFSIdata_.twr_ref_pos[(*dispMapNode + 1)*6], *dispMapInterpNode, tmpNodePos.data());
 
             //Now linearly interpolate the deflections to the intermediate location
             linInterpTotDisplacement(&brFSIdata_.twr_def[(*dispMapNode)*6], &brFSIdata_.twr_def[(*dispMapNode + 1)*6], *dispMapInterpNode, totDispNode.data());
 
             //Now transfer the interpolated displacement to the CFD mesh node
             computeDisplacement(totDispNode.data(), tmpNodePos.data(), dx, oldxyz);
+
+            //Now linearly interpolate the velocity to the intermediate location
+            linInterpTotVelocity(&brFSIdata_.twr_vel[(*dispMapNode)*6], &brFSIdata_.twr_vel[(*dispMapNode + 1)*6], *dispMapInterpNode, totVelNode.data());
+
+            //Now transfer the interpolated translational and rotational velocity to an equivalent translational velocity on the CFD mesh node
+            computeMeshVelocity(totVelNode.data(), totDispNode.data(), tmpNodePos.data(), mVel, oldxyz);
             
         }
     }
@@ -464,6 +474,7 @@ void fsiTurbine::mapDisplacements() {
                 double *dx = stk::mesh::field_data(*displacement, node);
                 int* dispMapNode = stk::mesh::field_data(*bldDispMap_, node);
                 double* dispMapInterpNode = stk::mesh::field_data(*bldDispMapInterp_, node);
+                double *mVel = stk::mesh::field_data(*meshVelocity, node);
                 
                 //Find the interpolated reference position first
                 linInterpVec(&brFSIdata_.bld_ref_pos[(*dispMapNode + iStart)*6], &brFSIdata_.bld_ref_pos[(*dispMapNode + iStart + 1)*6], *dispMapInterpNode, tmpNodePos.data());
@@ -473,6 +484,12 @@ void fsiTurbine::mapDisplacements() {
                 
                 //Now transfer the interpolated displacement to the CFD mesh node
                 computeDisplacement(totDispNode.data(), tmpNodePos.data(), dx, oldxyz);
+
+                //Now linearly interpolate the velocity to the intermediate location
+                linInterpTotVelocity(&brFSIdata_.bld_vel[(*dispMapNode + iStart)*6], &brFSIdata_.bld_vel[(*dispMapNode + iStart + 1)*6], *dispMapInterpNode, totVelNode.data());
+
+                //Now transfer the interpolated translational and rotational velocity to an equivalent translational velocity on the CFD mesh node
+                computeMeshVelocity(totVelNode.data(), totDispNode.data(), tmpNodePos.data(), mVel, oldxyz);
                 
             }
         }
@@ -498,6 +515,16 @@ void fsiTurbine::linInterpTotDisplacement(double *dispStart, double *dispEnd, do
     
 }
 
+//! Linearly interpolate velInterp = velStart + interpFac * (velEnd - velStart). 
+void fsiTurbine::linInterpTotVelocity(double *velStart, double *velEnd, double interpFac, double * velInterp) {
+
+    // Handle the translational velocity first
+    linInterpVec(velStart, velEnd, interpFac, velInterp);
+    // Now deal with the rotational velocity
+    linInterpVec(&velStart[3], &velEnd[3], interpFac, &velInterp[3]);
+    
+}
+    
 //! Linearly interpolate between 3-dimensional vectors 'a' and 'b' with interpolating factor 'interpFac'
 void fsiTurbine::linInterpVec(double * a, double * b, double interpFac, double * aInterpb) {
 
@@ -555,20 +582,46 @@ void fsiTurbine::cross(double * a, double * b, double * aCrossb) {
 }
     
 //! Convert one array of 6 deflections (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational displacement at a given node on the turbine surface CFD mesh.
-void fsiTurbine::computeDisplacement(double *totDispNode, double * xyzOF,  double *transDispNode, double * xyzCFD) {
+void fsiTurbine::computeDisplacement(double *totDispNode, double * totPosOF,  double *transDispNode, double * xyzCFD) {
 
-    std::vector<double> r(3,0.0); //Get the relative distance between xyzOF and xyzCFD
+    //Get the relative distance between totPosOF and xyzCFD in the inertial frame
+    std::vector<double> p(3,0.0); 
     for (size_t i=0; i < 3; i++)
-        r[i] = xyzCFD[i] - xyzOF[i];
+        p[i] = xyzCFD[i] - totPosOF[i];
+    //Convert 'p' vector to the local frame of reference
+    std::vector<double> pLoc(3,0.0);
+    applyWMrotation(&(totPosOF[3]), p.data(), pLoc.data());
 
-    std::vector<double> rRot(3,0.0);
-    applyWMrotation(&(totDispNode[3]), r.data(), rRot.data()); // Apply the Wiener-Milenkovic rotation to the
+    std::vector<double> pRot(3,0.0);
+    applyWMrotation(&(totDispNode[3]), pLoc.data(), pRot.data()); // Apply the rotation corresponding to the final orientation to bring back to inertial frame
 
     for (size_t i=0; i < 3; i++)
-        transDispNode[i] = totDispNode[i] + rRot[i] - r[i];
+        transDispNode[i] = totDispNode[i] + pRot[i] - p[i];
     
 }
 
+//! Convert one array of 6 velocities (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational velocity at a given node on the turbine surface CFD mesh.
+void fsiTurbine::computeMeshVelocity(double *totVelNode, double * totDispNode, double * totPosOF,  double *transVelNode, double * xyzCFD) {
+
+    //Get the relative distance between totPosOF and xyzCFD in the inertial frame
+    std::vector<double> p(3,0.0); 
+    for (size_t i=0; i < 3; i++)
+        p[i] = xyzCFD[i] - totPosOF[i];
+    //Convert 'p' vector to the local frame of reference
+    std::vector<double> pLoc(3,0.0);
+    applyWMrotation(&(totPosOF[3]), p.data(), pLoc.data(),-1.0);
+    
+    std::vector<double> pRot(3,0.0);
+    applyWMrotation(&(totDispNode[3]), pLoc.data(), pRot.data()); // Apply the rotation corresponding to the final orientation to bring back to inertial frame
+
+    std::vector<double> omegaCrosspRot(3,0.0);
+    cross(&(totVelNode[3]), pRot.data(), omegaCrosspRot.data());
+    
+    for (size_t i=0; i < 3; i++)
+        transVelNode[i] = totVelNode[i] + omegaCrosspRot[i];
+    
+}
+    
 double fsiTurbine::compute_error_norm(VectorFieldType * vec, VectorFieldType * vec_ref, stk::mesh::Part * part) {
 
     const int ndim = meta_.spatial_dimension();
@@ -603,8 +656,8 @@ double fsiTurbine::compute_error_norm(VectorFieldType * vec, VectorFieldType * v
     
 }
 
-//! Apply a Wiener-Milenkovic rotation 'wm' to a vector 'r' into 'rRot'
-void fsiTurbine::applyWMrotation(double * wm, double * r, double *rRot) {
+//! Apply a Wiener-Milenkovic rotation 'wm' to a vector 'r' into 'rRot'. To optionally transpose the rotation, set 'tranpose=-1.0'.
+void fsiTurbine::applyWMrotation(double * wm, double * r, double *rRot, double transpose) {
 
     double wm0 = 2.0-0.125*dot(wm, wm);
     double nu = 2.0/(4.0-wm0);
@@ -615,7 +668,7 @@ void fsiTurbine::applyWMrotation(double * wm, double * r, double *rRot) {
     cross(wm, wmCrossR.data(), wmCrosswmCrossR.data());
     
     for(size_t i=0; i < 3; i++)
-        rRot[i] = r[i] + nu * cosPhiO2 * wmCrossR[i] + 0.5 * nu * nu * wmCrosswmCrossR[i];
+        rRot[i] = r[i] + transpose * nu * cosPhiO2 * wmCrossR[i] + 0.5 * nu * nu * wmCrosswmCrossR[i];
     
 }
 

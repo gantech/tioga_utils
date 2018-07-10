@@ -59,11 +59,14 @@ void MeshMotion::setup()
         stk::topology::NODE_RANK, "mesh_displacement");
     VectorFieldType& mesh_displacement_ref = meta_.declare_field<VectorFieldType>(
         stk::topology::NODE_RANK, "mesh_displacement_ref");
+    VectorFieldType& mesh_velocity = meta_.declare_field<VectorFieldType>(
+        stk::topology::NODE_RANK, "mesh_velocity");
 
     stk::mesh::put_field(coordinates, meta_.universal_part());
     stk::mesh::put_field(current_coordinates, meta_.universal_part());
     stk::mesh::put_field(mesh_displacement, meta_.universal_part());
     stk::mesh::put_field(mesh_displacement_ref, meta_.universal_part());
+    stk::mesh::put_field(mesh_velocity, meta_.universal_part());
 
     const int nDim = meta_.spatial_dimension();
     std::vector<std::string> partNameVec = {"blade1", "blade2", "blade3", "hub", "nacelle", "tower"};

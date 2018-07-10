@@ -92,6 +92,8 @@ private:
     //! Linearly interpolate dispInterp = dispStart + interpFac * (dispEnd - dispStart). Special considerations for Wiener-Milenkovic parameters
     void linInterpTotDisplacement(double *dispStart, double *dispEnd, double interpFac, double * dispInterp);
 
+    //! Linearly interpolate velInterp = velStart + interpFac * (velEnd - velStart). 
+    void linInterpTotVelocity(double *velStart, double *velEnd, double interpFac, double * velInterp);
     //! Linearly interpolate between 3-dimensional vectors 'a' and 'b' with interpolating factor 'interpFac'
     void linInterpVec(double * a, double * b, double interpFac, double * aInterpb);
 
@@ -106,11 +108,14 @@ private:
     //! Convert one array of 6 deflections (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational displacement at a given node on the turbine surface CFD mesh.
     void computeDisplacement(double *totDispNode, double * xyzOF,  double *transDispNode, double * xyzCFD);
 
+    //! Convert one array of 6 velocities (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational velocity at a given node on the turbine surface CFD mesh.
+    void computeMeshVelocity(double *totVelNode, double * totDispNode, double * totPosOF,  double *transVelNode, double * xyzCFD);
+
     //! Split a force and moment into the surrounding 'left' and 'right' nodes in a variationally consistent manner using interpFac
     void splitForceMoment(double *totForceMoment, double interpFac, double *leftForceMoment, double *rightForceMoment);
     
     //! Apply a Wiener-Milenkovic rotation 'wm' to a vector 'r' into 'rRot'
-    void applyWMrotation(double * wm, double * r, double *rRot);
+    void applyWMrotation(double * wm, double * r, double *rRot, double transpose=1.0);
     
     //! Calculate the distance between 3-dimensional vectors 'a' and 'b'
     double calcDistanceSquared(double * a, double * b);
