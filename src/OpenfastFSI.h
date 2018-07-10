@@ -50,6 +50,8 @@ private:
     
     void read_turbine_data(int iTurb, fast::fastInputs & fi, YAML::Node turbNode);
 
+    void bcast_turbine_params(int iTurb);
+
     void read_inputs(fast::fastInputs & fi, YAML::Node & ofNode);
     
 };

@@ -185,7 +185,8 @@ void OpenfastFSI::setup() {
 void OpenfastFSI::initialize(double initial_time)
 {
     
-    FAST.allocateTurbinesToProcsSimple(); 
+    FAST.allocateTurbinesToProcsSimple();
+    std::cout << "Proc " << bulk_.parallel_rank() << " Called allocate" << std::endl ;
     FAST.init();
     //TODO: Check here on the processor containing the turbine that the number of blades on the turbine is the same as the number of blade parts specified in the input file.
 
@@ -194,15 +195,72 @@ void OpenfastFSI::initialize(double initial_time)
     int nTurbinesGlob = FAST.get_nTurbinesGlob();
     for (int i=0; i < nTurbinesGlob; i++) {
         if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation
-            FAST.get_turbineParams(i, fsiTurbineData_[i]->params_);
-            fsiTurbineData_[i]->initialize(); //TODO: Allocate memory to store all positions, deflections, velocity, and loads.
+            int turbProc = FAST.getProc(i);
+            fsiTurbineData_[i]->setProc(turbProc);
+            if (bulk_.parallel_rank() == turbProc) {
+                FAST.get_turbineParams(i, fsiTurbineData_[i]->params_);
+            }
+            bcast_turbine_params(i);
+            fsiTurbineData_[i]->initialize();
          }
     }
     
     compute_mapping();
+    std::cout << "Proc " << bulk_.parallel_rank() << " Called computeMapping" << std::endl ;
     send_loads();
+    std::cout << "Proc " << bulk_.parallel_rank() << " Called send loads" << std::endl ;    
     FAST.solution0();
     deform_mesh(initial_time);
+    
+}
+
+void OpenfastFSI::bcast_turbine_params(int iTurb) {
+
+    std::vector<int> tIntParams(7,0); //Assumes a max number of blades of 3
+    std::vector<double> tDoubleParams(6,0.0);
+    int turbProc = fsiTurbineData_[iTurb]->getProc();
+    if (bulk_.parallel_rank() == turbProc) {
+        tIntParams[0] = fsiTurbineData_[iTurb]->params_.TurbID;
+        tIntParams[1] = fsiTurbineData_[iTurb]->params_.numBlades;
+        tIntParams[2] = fsiTurbineData_[iTurb]->params_.nTotBRfsiPtsBlade;
+        tIntParams[3] = fsiTurbineData_[iTurb]->params_.nBRfsiPtsTwr;
+        for (size_t i=0; i < fsiTurbineData_[iTurb]->params_.numBlades; i++) {
+            tIntParams[4+i] = fsiTurbineData_[iTurb]->params_.nBRfsiPtsBlade[i];
+        }
+
+        for(size_t i=0; i < 3; i++) {
+            tDoubleParams[i] = fsiTurbineData_[iTurb]->params_.TurbineBasePos[i];
+            tDoubleParams[3+i] = fsiTurbineData_[iTurb]->params_.TurbineHubPos[i];
+        }
+
+    }
+    int iError = MPI_Bcast(tIntParams.data(), 7, MPI_INT, turbProc, bulk_.parallel());
+    iError = MPI_Bcast(tDoubleParams.data(), 6, MPI_DOUBLE, turbProc, bulk_.parallel());
+
+
+    if (bulk_.parallel_rank() != turbProc) {
+        fsiTurbineData_[iTurb]->params_.TurbID = tIntParams[0];
+        fsiTurbineData_[iTurb]->params_.numBlades = tIntParams[1] ;
+        fsiTurbineData_[iTurb]->params_.nTotBRfsiPtsBlade = tIntParams[2] ;
+        fsiTurbineData_[iTurb]->params_.nBRfsiPtsTwr = tIntParams[3] ;
+        fsiTurbineData_[iTurb]->params_.nBRfsiPtsBlade.resize(fsiTurbineData_[iTurb]->params_.numBlades);
+        for (size_t i=0; i < fsiTurbineData_[iTurb]->params_.numBlades; i++) {
+            fsiTurbineData_[iTurb]->params_.nBRfsiPtsBlade[i] = tIntParams[4+i] ;
+        }
+
+        fsiTurbineData_[iTurb]->params_.TurbineBasePos.resize(3);
+        fsiTurbineData_[iTurb]->params_.TurbineHubPos.resize(3);
+        for(size_t i=0; i < 3; i++) {
+            fsiTurbineData_[iTurb]->params_.TurbineBasePos[i] = tDoubleParams[i];
+            fsiTurbineData_[iTurb]->params_.TurbineHubPos[i] = tDoubleParams[3+i];
+        }
+        
+    }
+
+    
+        
+
+    
     
 }
 
@@ -211,12 +269,20 @@ void OpenfastFSI::compute_mapping() {
     int nTurbinesGlob = FAST.get_nTurbinesGlob();
     for (int i=0; i < nTurbinesGlob; i++) {
         if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation
-            FAST.getTowerRefPositions(fsiTurbineData_[i]->brFSIdata_.twr_ref_pos, i);
-            FAST.getBladeRefPositions(fsiTurbineData_[i]->brFSIdata_.bld_ref_pos, i);
-            FAST.getHubRefPosition(fsiTurbineData_[i]->brFSIdata_.hub_ref_pos, i);
-            FAST.getNacelleRefPosition(fsiTurbineData_[i]->brFSIdata_.nac_ref_pos, i);
+            int turbProc = fsiTurbineData_[i]->getProc();
+            if (bulk_.parallel_rank() == turbProc) {
+                FAST.getTowerRefPositions(fsiTurbineData_[i]->brFSIdata_.twr_ref_pos, i);
+                FAST.getBladeRefPositions(fsiTurbineData_[i]->brFSIdata_.bld_ref_pos, i);
+                FAST.getHubRefPosition(fsiTurbineData_[i]->brFSIdata_.hub_ref_pos, i);
+                FAST.getNacelleRefPosition(fsiTurbineData_[i]->brFSIdata_.nac_ref_pos, i);
+            }
+            int iError = MPI_Bcast(fsiTurbineData_[i]->brFSIdata_.twr_ref_pos.data(), (fsiTurbineData_[i]->params_.nBRfsiPtsTwr)*6, MPI_DOUBLE, turbProc, bulk_.parallel());
+            int nTotBldNodes = fsiTurbineData_[i]->params_.nTotBRfsiPtsBlade;
+            iError = MPI_Bcast(fsiTurbineData_[i]->brFSIdata_.bld_ref_pos.data(), nTotBldNodes*6, MPI_DOUBLE, turbProc, bulk_.parallel());
+            iError = MPI_Bcast(fsiTurbineData_[i]->brFSIdata_.hub_ref_pos.data(), 6, MPI_DOUBLE, turbProc, bulk_.parallel());
+            iError = MPI_Bcast(fsiTurbineData_[i]->brFSIdata_.nac_ref_pos.data(), 6, MPI_DOUBLE, turbProc, bulk_.parallel());
+
             fsiTurbineData_[i]->computeMapping();
-            
         }
     }
     
@@ -239,9 +305,19 @@ void OpenfastFSI::send_loads() {
     int nTurbinesGlob = FAST.get_nTurbinesGlob();
     for (int i=0; i < nTurbinesGlob; i++) {
         if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation
+            int turbProc = fsiTurbineData_[i]->getProc();
             fsiTurbineData_[i]->mapLoads();
-            FAST.setTowerForces(fsiTurbineData_[i]->brFSIdata_.twr_ld, i, fast::np1);
-            FAST.setBladeForces(fsiTurbineData_[i]->brFSIdata_.bld_ld, i, fast::np1);
+
+            int nTotBldNodes = fsiTurbineData_[i]->params_.nTotBRfsiPtsBlade;            
+            if (bulk_.parallel_rank() == turbProc) {
+                int iError = MPI_Reduce(MPI_IN_PLACE, fsiTurbineData_[i]->brFSIdata_.twr_ld.data(), (fsiTurbineData_[i]->params_.nBRfsiPtsTwr)*6, MPI_DOUBLE, MPI_SUM, turbProc, bulk_.parallel());
+                iError = MPI_Reduce(MPI_IN_PLACE, fsiTurbineData_[i]->brFSIdata_.bld_ld.data(), nTotBldNodes*6, MPI_DOUBLE, MPI_SUM, turbProc, bulk_.parallel());
+                FAST.setTowerForces(fsiTurbineData_[i]->brFSIdata_.twr_ld, i, fast::np1);
+                FAST.setBladeForces(fsiTurbineData_[i]->brFSIdata_.bld_ld, i, fast::np1);
+            } else {
+                int iError = MPI_Reduce(fsiTurbineData_[i]->brFSIdata_.twr_ld.data(), NULL, (fsiTurbineData_[i]->params_.nBRfsiPtsTwr)*6, MPI_DOUBLE, MPI_SUM, turbProc, bulk_.parallel());
+                iError = MPI_Reduce(fsiTurbineData_[i]->brFSIdata_.bld_ld.data(), NULL, (nTotBldNodes)*6, MPI_DOUBLE, MPI_SUM, turbProc, bulk_.parallel());
+            }
         }
     }
     
@@ -252,10 +328,20 @@ void OpenfastFSI::get_displacements() {
     int nTurbinesGlob = FAST.get_nTurbinesGlob();
     for (int i=0; i < nTurbinesGlob; i++) {
         if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation
-            FAST.getTowerDisplacements(fsiTurbineData_[i]->brFSIdata_.twr_def, fsiTurbineData_[i]->brFSIdata_.twr_vel, i, fast::np1);
-            FAST.getBladeDisplacements(fsiTurbineData_[i]->brFSIdata_.bld_def, fsiTurbineData_[i]->brFSIdata_.bld_vel, i, fast::np1);
-            FAST.getHubDisplacement(fsiTurbineData_[i]->brFSIdata_.hub_def, fsiTurbineData_[i]->brFSIdata_.hub_vel, i, fast::np1);
-            FAST.getNacelleDisplacement(fsiTurbineData_[i]->brFSIdata_.nac_def, fsiTurbineData_[i]->brFSIdata_.nac_vel, i, fast::np1);
+            int turbProc = fsiTurbineData_[i]->getProc();
+            if (bulk_.parallel_rank() == turbProc) {            
+                FAST.getTowerDisplacements(fsiTurbineData_[i]->brFSIdata_.twr_def, fsiTurbineData_[i]->brFSIdata_.twr_vel, i, fast::np1);
+                FAST.getBladeDisplacements(fsiTurbineData_[i]->brFSIdata_.bld_def, fsiTurbineData_[i]->brFSIdata_.bld_vel, i, fast::np1);
+                FAST.getHubDisplacement(fsiTurbineData_[i]->brFSIdata_.hub_def, fsiTurbineData_[i]->brFSIdata_.hub_vel, i, fast::np1);
+                FAST.getNacelleDisplacement(fsiTurbineData_[i]->brFSIdata_.nac_def, fsiTurbineData_[i]->brFSIdata_.nac_vel, i, fast::np1);
+            }
+            int iError = MPI_Bcast(fsiTurbineData_[i]->brFSIdata_.twr_ref_pos.data(), (fsiTurbineData_[i]->params_.nBRfsiPtsTwr)*6, MPI_DOUBLE, turbProc, bulk_.parallel());
+            int nTotBldNodes = fsiTurbineData_[i]->params_.nTotBRfsiPtsBlade;
+            iError = MPI_Bcast(fsiTurbineData_[i]->brFSIdata_.bld_ref_pos.data(), nTotBldNodes*6, MPI_DOUBLE, turbProc, bulk_.parallel());
+            iError = MPI_Bcast(fsiTurbineData_[i]->brFSIdata_.hub_ref_pos.data(), 6, MPI_DOUBLE, turbProc, bulk_.parallel());
+            iError = MPI_Bcast(fsiTurbineData_[i]->brFSIdata_.nac_ref_pos.data(), 6, MPI_DOUBLE, turbProc, bulk_.parallel());
+            
+            
         }
     }
     
@@ -270,11 +356,8 @@ void OpenfastFSI::deform_mesh(double current_time)
     int nTurbinesGlob = FAST.get_nTurbinesGlob();
     for (int i=0; i < nTurbinesGlob; i++) {
         if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation {
-            std::cout << "Setting sample displacements " << std::endl ;            
             fsiTurbineData_[i]->setSampleDisplacement();
-            std::cout << "Setting reference displacements " << std::endl ;
             fsiTurbineData_[i]->setRefDisplacement();
-            std::cout << "Mapping displacements " << std::endl ;            
             fsiTurbineData_[i]->mapDisplacements();
         }
     }

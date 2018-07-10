@@ -54,6 +54,11 @@ public:
     //! Set reference displacement on the turbine blade surface mesh, for comparison with Sample displacement set in setSampleDisplacement
     void setRefDisplacement();
 
+    //! Set the processor containing the turbine
+    void setProc(int turbProc) {turbineProc_ = turbProc;}
+    //! Set the processor containing the turbine
+    int getProc() {return turbineProc_;}
+    
     fast::turbineDataType params_;
     fast::turbBRfsiDataType brFSIdata_;
     

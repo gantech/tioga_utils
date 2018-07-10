@@ -1,5 +1,7 @@
 #include "fsiTurbine.h"
 
+#include "stk_util/parallel/ParallelReduce.hpp"
+#include "stk_mesh/base/FieldParallel.hpp"
 #include "stk_mesh/base/Field.hpp"
 #include <cmath>
 
@@ -184,7 +186,7 @@ void fsiTurbine::mapLoads() {
     std::vector<double> tmpNodePos(3,0.0); // Vector to temporarily store a position vector
     
     // Do the tower first
-    stk::mesh::Selector sel(*twrPart_);
+    stk::mesh::Selector sel(meta_.locally_owned_part() & (*twrPart_) );
     const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
     for (auto b: bkts) {
         for (size_t in=0; in < b->size(); in++) {            
@@ -210,7 +212,7 @@ void fsiTurbine::mapLoads() {
     // Now the blades
     int iStart = 0;
     for (int iBlade=0; iBlade < nBlades; iBlade++) {
-        stk::mesh::Selector sel(*bladePartVec_[iBlade]);
+        stk::mesh::Selector sel(meta_.locally_owned_part() & (*bladePartVec_[iBlade]) );
         const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
         for (auto b: bkts) {
             for (size_t in=0; in < b->size(); in++) {            
@@ -239,30 +241,37 @@ void fsiTurbine::mapLoads() {
         //Compute the total force and moment at the hub from this blade
         std::vector<double> hubForceMoment(6,0.0);
         computeHubForceMomentForPart(hubForceMoment, brFSIdata_.hub_ref_pos, bladePartVec_[iBlade]);
-        //Now compute total force and moment at the hub from the loads mapped to the 
-        std::vector<double> hubForceMomentMapped(6,0.0);
-        for (size_t i=0 ; i < nPtsBlade; i++) {
-            computeEffForceMoment( &(brFSIdata_.bld_ld[(i+iStart)*6]), &(brFSIdata_.bld_ref_pos[(i+iStart)*6]), hubForceMomentMapped.data(), brFSIdata_.hub_ref_pos.data() );
-            for(size_t j=0; j < ndim; j++) // Add the moment manually
-                hubForceMomentMapped[3+j] += brFSIdata_.bld_ld[(i+iStart)*6+3+j];
-        }
-        std::cout << "Total force moment on the hub due to blade " << iBlade << std::endl;
-        std::cout << "Force = (";
-        for(size_t j=0; j < ndim; j++)
-            std::cout << hubForceMoment[j] << ", ";
-        std::cout << ") Moment = (" ;
-        for(size_t j=0; j < ndim; j++)
-            std::cout << hubForceMoment[3+j] << ", ";
-        std::cout << ")" << std::endl;
-        std::cout << "Total force moment on the hub from mapped load due to blade " << iBlade << std::endl;
-        std::cout << "Force = (";
-        for(size_t j=0; j < ndim; j++)
-            std::cout << hubForceMomentMapped[j] << ", ";
-        std::cout << ") Moment = (" ;
-        for(size_t j=0; j < ndim; j++)
-            std::cout << hubForceMomentMapped[3+j] << ", ";
-        std::cout << ")" << std::endl;
 
+        //Now compute total force and moment at the hub from the loads mapped to the 
+        std::vector<double> l_hubForceMomentMapped(6,0.0);
+        for (size_t i=0 ; i < nPtsBlade; i++) {
+            computeEffForceMoment( &(brFSIdata_.bld_ld[(i+iStart)*6]), &(brFSIdata_.bld_ref_pos[(i+iStart)*6]), l_hubForceMomentMapped.data(), brFSIdata_.hub_ref_pos.data() );
+            for(size_t j=0; j < ndim; j++) // Add the moment manually
+                l_hubForceMomentMapped[3+j] += brFSIdata_.bld_ld[(i+iStart)*6+3+j];
+        }
+        std::vector<double> hubForceMomentMapped(6,0.0);
+        stk::all_reduce_sum(bulk_.parallel(), l_hubForceMomentMapped.data(), hubForceMomentMapped.data(), 6);
+        
+        
+        if (bulk_.parallel_rank() == turbineProc_) {
+            
+            std::cout << "Total force moment on the hub due to blade " << iBlade << std::endl;
+            std::cout << "Force = (";
+            for(size_t j=0; j < ndim; j++)
+                std::cout << hubForceMoment[j] << ", ";
+            std::cout << ") Moment = (" ;
+            for(size_t j=0; j < ndim; j++)
+                std::cout << hubForceMoment[3+j] << ", ";
+            std::cout << ")" << std::endl;
+            std::cout << "Total force moment on the hub from mapped load due to blade " << iBlade << std::endl;
+            std::cout << "Force = (";
+            for(size_t j=0; j < ndim; j++)
+                std::cout << hubForceMomentMapped[j] << ", ";
+            std::cout << ") Moment = (" ;
+            for(size_t j=0; j < ndim; j++)
+                std::cout << hubForceMomentMapped[3+j] << ", ";
+            std::cout << ")" << std::endl;
+        }
         
         iStart += nPtsBlade;
     }
@@ -284,17 +293,21 @@ void fsiTurbine::computeHubForceMomentForPart(std::vector<double> & hubForceMome
 
     const int ndim = meta_.spatial_dimension();
     VectorFieldType* modelCoords = meta_.get_field<VectorFieldType>(stk::topology::NODE_RANK, "coordinates");
+
+    std::vector<double> l_hubForceMoment(6,0.0);
     
-    stk::mesh::Selector sel(*part);
+    stk::mesh::Selector sel(meta_.locally_owned_part() & (*part) );
     const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
     for (auto b: bkts) {
         for (size_t in=0; in < b->size(); in++) {            
             auto node = (*b)[in];
             double* xyz = stk::mesh::field_data(*modelCoords, node);
             double* fsiForceNode = stk::mesh::field_data(*fsiForce_, node);
-            computeEffForceMoment(fsiForceNode, xyz, hubForceMoment.data(), hubPos.data());
+            computeEffForceMoment(fsiForceNode, xyz, l_hubForceMoment.data(), hubPos.data());
         }
     }
+
+    stk::all_reduce_sum(bulk_.parallel(), l_hubForceMoment.data(), hubForceMoment.data(), 6);
     
 }
     
@@ -318,12 +331,14 @@ void fsiTurbine::setSampleDisplacement() {
     int nPtsBlade = params_.nBRfsiPtsBlade[iBlade];
     for (size_t i=0; i < nPtsBlade; i++) {
         double rDistSq = calcDistanceSquared(&(brFSIdata_.bld_ref_pos[i*6]), &(brFSIdata_.bld_ref_pos[0]) )/10000.0;
+        double sinRdistSq = std::sin(rDistSq);
         //Set rotational displacement
-        double rot = 4.0*tan(0.25 * (45.0 * M_PI / 180.0) * rDistSq); // 4.0 * tan(phi/4.0) parameter for Wiener-Milenkovic
-        std::vector<double> wmRot = {rot, rot, 0.0}; //Wiener-Milenkovic parameter
+        double rot = 4.0*tan(0.25 * (45.0 * M_PI / 180.0) * sinRdistSq); // 4.0 * tan(phi/4.0) parameter for Wiener-Milenkovic
+        std::vector<double> wmRot = {0.0, rot, 0.0}; //Wiener-Milenkovic parameter
+        //std::vector<double> wmRot = {0.0, 0.0, 0.0}; //Wiener-Milenkovic parameter        
         composeWM(&(brFSIdata_.hub_ref_pos[3]), wmRot.data(), &(brFSIdata_.bld_def[i*6+3])); //Compose with hub orientation
         //Set translational displacement
-        double xDisp = rDistSq * 5.0;
+        double xDisp = sinRdistSq * 5.0;
         brFSIdata_.bld_def[i*6+0] = xDisp;
         brFSIdata_.bld_def[i*6+1] = 0.0;
         brFSIdata_.bld_def[i*6+2] = 0.0;
@@ -356,13 +371,14 @@ void fsiTurbine::setRefDisplacement() {
 
       // Compute position of current node relative to blade root
       double rDistSq = calcDistanceSquared( xyz, bl_ref_pos.data() )/10000.0;
+      double sinRdistSq = std::sin(rDistSq);
 
       //Set translational displacement
-      vecRefNode[0] = rDistSq * tipdisp;
+      vecRefNode[0] = sinRdistSq * tipdisp;
       vecRefNode[1] = 0.0;
       vecRefNode[2] = 0.0;
 
-      double rot = 4.0*tan(0.25 * (45.0 * M_PI / 180.0) * rDistSq); // 4.0 * tan(phi/4.0) parameter for Wiener-Milenkovic
+      double rot = 4.0*tan(0.25 * (45.0 * M_PI / 180.0) * sinRdistSq); // 4.0 * tan(phi/4.0) parameter for Wiener-Milenkovic
       std::vector<double> wmRot = {0.0, rot, 0.0}; //Wiener-Milenkovic parameter
 
       std::vector<double> r = {xyz[0], xyz[1], 0.0}; //Wiener-Milenkovic parameter
@@ -463,7 +479,9 @@ void fsiTurbine::mapDisplacements() {
 
         double errorNorm = compute_error_norm(displacement, refDisplacement, bladePartVec_[iBlade]);
 
-        std::cout << "Error in displacement for blade " << iBlade << " = " << errorNorm << std::endl ;
+        if (!bulk_.parallel_rank()) {
+            std::cout << "Error in displacement for blade " << iBlade << " = " << errorNorm << std::endl ;
+        }
         iStart += nPtsBlade;
     }
 
@@ -572,10 +590,16 @@ double fsiTurbine::compute_error_norm(VectorFieldType * vec, VectorFieldType * v
         }
     }
 
-    for (size_t i=0; i < ndim; i++)
-        errorNorm[i] = sqrt(errorNorm[i]/nNodes);
+    std::vector<double> g_errorNorm(3,0.0);
+    stk::all_reduce_sum(bulk_.parallel(), errorNorm.data(), g_errorNorm.data(), 3);
+    
+    int g_nNodes = 0;
+    stk::all_reduce_sum(bulk_.parallel(), &nNodes, &g_nNodes, 1);
 
-    return errorNorm[0];
+    for (size_t i=0; i < ndim; i++)
+        g_errorNorm[i] = sqrt(g_errorNorm[i]/g_nNodes);
+
+    return g_errorNorm[0];
     
 }
 
