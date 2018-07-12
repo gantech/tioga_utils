@@ -49,7 +49,7 @@ public:
     void computeMapping();
 
     //! Set sample displacement on the OpenFAST mesh before mapping to the turbine blade surface mesh
-    void setSampleDisplacement();
+    void setSampleDisplacement(double curTime=0.0);
 
     //! Set reference displacement on the turbine blade surface mesh, for comparison with Sample displacement set in setSampleDisplacement
     void setRefDisplacement();
@@ -103,7 +103,7 @@ private:
     void linInterpRotation(double * qStart, double * qEnd, double interpFac, double * qInterp);
 
     //! Compose Wiener-Milenkovic parameters 'p' and 'q' into 'pPlusq'. If a transpose of 'p' is required, set tranposeP to '-1', else leave blank or set to '+1'
-    void composeWM(double * p, double * q, double * pPlusq, double transposeP=1.0);
+    void composeWM(double * p, double * q, double * pPlusq, double transposeP=1.0, double transposeQ=1.0);
 
     //! Convert one array of 6 deflections (transX, transY, transZ, wmX, wmY, wmZ) into one vector of translational displacement at a given node on the turbine surface CFD mesh.
     void computeDisplacement(double *totDispNode, double * xyzOF,  double *transDispNode, double * xyzCFD);

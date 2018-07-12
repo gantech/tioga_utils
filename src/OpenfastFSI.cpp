@@ -293,9 +293,9 @@ void OpenfastFSI::execute(double current_time)
 
     deform_mesh(current_time);
     //In Nalu - the CFD time step should ideally be performed here. 
-    send_loads();
-    FAST.update_states_driver_time_step();
-    FAST.advance_to_next_driver_time_step();
+//    send_loads();
+//    FAST.update_states_driver_time_step();
+//    FAST.advance_to_next_driver_time_step();
     
 }
   
@@ -356,8 +356,8 @@ void OpenfastFSI::deform_mesh(double current_time)
     int nTurbinesGlob = FAST.get_nTurbinesGlob();
     for (int i=0; i < nTurbinesGlob; i++) {
         if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation {
-            fsiTurbineData_[i]->setSampleDisplacement();
-            fsiTurbineData_[i]->setRefDisplacement();
+            fsiTurbineData_[i]->setSampleDisplacement(current_time);
+//            fsiTurbineData_[i]->setRefDisplacement();
             fsiTurbineData_[i]->mapDisplacements();
         }
     }
