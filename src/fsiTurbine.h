@@ -52,7 +52,7 @@ public:
     void setSampleDisplacement(double curTime=0.0);
 
     //! Set reference displacement on the turbine blade surface mesh, for comparison with Sample displacement set in setSampleDisplacement
-    void setRefDisplacement();
+    void setRefDisplacement(double curTime=0.0);
 
     //! Set the processor containing the turbine
     void setProc(int turbProc) {turbineProc_ = turbProc;}
@@ -127,7 +127,7 @@ private:
     void cross(double * a, double * b, double * aCrossb);
 
     //! Compute the error norm between two fields for a given part
-    double compute_error_norm(VectorFieldType * vec, VectorFieldType * vec_ref, stk::mesh::Part * part);
+    void compute_error_norm(VectorFieldType * vec, VectorFieldType * vec_ref, stk::mesh::Part * part, std::vector<double> & err);
 
     stk::mesh::MetaData& meta_;
     stk::mesh::BulkData& bulk_;

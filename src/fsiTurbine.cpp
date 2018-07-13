@@ -354,6 +354,7 @@ void fsiTurbine::setSampleDisplacement(double curTime) {
                 
             double rDistSq = calcDistanceSquared(&(brFSIdata_.bld_ref_pos[(iStart+i)*6]), &(brFSIdata_.bld_ref_pos[(iStart)*6]) )/10000.0;
             double sinRdistSq = std::sin(rDistSq);
+            double tanRdistSq = std::tan(rDistSq);
             //Set rotational displacement
             std::vector<double> wmRot1 = {1.0/std::sqrt(3.0), 1.0/std::sqrt(3.0), 1.0/std::sqrt(3.0)};
             std::vector<double> wmRot(3,0.0);
@@ -393,6 +394,11 @@ void fsiTurbine::setSampleDisplacement(double curTime) {
             brFSIdata_.bld_def[(iStart+i)*6+0] = transDispRot[0] + rRot[0] - r[0];
             brFSIdata_.bld_def[(iStart+i)*6+1] = transDispRot[1] + rRot[1] - r[1];
             brFSIdata_.bld_def[(iStart+i)*6+2] = transDispRot[2] + rRot[2] - r[2];
+
+            for (size_t j=0; j < 3; j++) {
+                brFSIdata_.bld_vel[(iStart+i)*6+j] = tanRdistSq * 3.743; // Completely arbitrary values
+                brFSIdata_.bld_vel[(iStart+i)*6+3+j] = sinRdistSq * 6.232; // Completely arbitrary values
+            }
             
         }
         iStart += nPtsBlade;
@@ -401,11 +407,17 @@ void fsiTurbine::setSampleDisplacement(double curTime) {
 
 
 //! Set reference displacement on the turbine blade surface mesh, for comparison with Sample displacement set in setSampleDisplacement
-void fsiTurbine::setRefDisplacement() {
+void fsiTurbine::setRefDisplacement(double curTime) {
 
-  // some hard coded parameters
-  std::vector<double> bl_ref_pos = {0.0, 0.0, 131.5}; // root of blade 1
-  double  tipdisp = 5.0;
+  //Turbine rotates at 12.1 rpm
+  double omega=(12.1/60.0)*2.0*M_PI; //12.1 rpm
+  double theta=omega*curTime;
+  
+  //Rotate the hub first
+  std::vector<double> hubPos = {0, 0, 130.0};
+  std::vector<double> wmHubRot = {4.0*tan(0.25*theta), 0.0, 0.0};
+  
+  double sinOmegaT = std::sin(omega*curTime);
 
   // extract the vector field type set by this function
   const int ndim = meta_.spatial_dimension();
@@ -413,36 +425,84 @@ void fsiTurbine::setRefDisplacement() {
   stk::topology::NODE_RANK, "coordinates");
   VectorFieldType* refDisp = meta_.get_field<VectorFieldType>(
   stk::topology::NODE_RANK, "mesh_displacement_ref");
+  VectorFieldType* refVel = meta_.get_field<VectorFieldType>(
+      stk::topology::NODE_RANK, "mesh_velocity_ref");
 
-  int iBlade = 0; // for testing purposes, we are doing this only for the first blade
-  stk::mesh::Selector sel(*bladePartVec_[iBlade]); // extract blade
-  const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel); // extract buckets for the blade
+  std::vector<double> zAxis0 = {0.0, 0.0, 1.0};
+  
+  for (size_t iBlade=0; iBlade < 3; iBlade++) {
 
-  for (auto b: bkts) { // loop over number of buckets
-    for (size_t in=0; in < b->size(); in++) { // loop over all nodes in the bucket
-      auto node = (*b)[in];
-      double* xyz = stk::mesh::field_data(*modelCoords, node);
-      double* vecRefNode = stk::mesh::field_data(*refDisp, node); // extract
+      std::vector<double> wmRotBlade_ref = {4.0*tan(0.25 * iBlade * 120.0 * M_PI / 180.0), 0.0, 0.0};
+      std::vector<double> wmRotBlade(3,0.0);
+      composeWM(wmHubRot.data(), wmRotBlade_ref.data(), wmRotBlade.data());
 
-      // Compute position of current node relative to blade root
-      double rDistSq = calcDistanceSquared( xyz, bl_ref_pos.data() )/10000.0;
-      double sinRdistSq = std::sin(rDistSq);
+      std::vector<double> nHatRef(3,0.0);
+      std::vector<double> nHat(3,0.0);
 
-      //Set translational displacement
-      vecRefNode[0] = sinRdistSq * tipdisp;
-      vecRefNode[1] = 0.0;
-      vecRefNode[2] = 0.0;
+      applyWMrotation(wmRotBlade_ref.data(), zAxis0.data(), nHatRef.data());
+      applyWMrotation(wmRotBlade.data(), zAxis0.data(), nHat.data());
+      
+      stk::mesh::Selector sel(*bladePartVec_[iBlade]); // extract blade
+      const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel); // extract buckets for the blade
+      
+      for (auto b: bkts)  {// loop over number of buckets
+          for (size_t in=0; in < b->size(); in++) { // loop over all nodes in the bucket
+              auto node = (*b)[in];
+              double* xyz = stk::mesh::field_data(*modelCoords, node);
+              double* vecRefNode = stk::mesh::field_data(*refDisp, node); 
+              double* velRefNode = stk::mesh::field_data(*refVel, node); 
+              
+              std::vector<double> xyzMhub(3,0.0);
+              for(size_t j=0; j < 3; j++)
+                  xyzMhub[j] = xyz[j] - hubPos[j];
 
-      double rot = 4.0*tan(0.25 * (45.0 * M_PI / 180.0) * sinRdistSq); // 4.0 * tan(phi/4.0) parameter for Wiener-Milenkovic
-      std::vector<double> wmRot = {0.0, rot, 0.0}; //Wiener-Milenkovic parameter
+              //Translational displacement due to turbine rotation
+              std::vector<double> xyzMhubRot(3,0.0);
+              applyWMrotation(wmHubRot.data(),xyzMhub.data(), xyzMhubRot.data());
+              
+              // Compute position of current node relative to blade root
+              double rDistSq = (dot(xyzMhub.data(), nHatRef.data()) - 1.5)*(dot(xyzMhub.data(), nHatRef.data()) - 1.5)/10000.0;
+              double sinRdistSq = std::sin(rDistSq);
+              double tanRdistSq = std::tan(rDistSq);
+              
+              //Set translational displacement due to deflection
+              double xDisp = sinRdistSq * 15.0 * sinOmegaT;
+              std::vector<double> transDisp = {xDisp, xDisp, xDisp};
+              std::vector<double> transDispRot(3,0.0);
+              applyWMrotation(wmRotBlade.data(), transDisp.data(), transDispRot.data());
+              
+              
+              //Translational displacement due to rotational deflection
+              double xyzMhubDotNHatRef = dot(xyzMhub.data(), nHatRef.data());
+              std::vector<double> pGlobRef(3,0.0);
+              std::vector<double> pLoc(3,0.0);
+              for(size_t j=0; j < 3; j++)
+                  pGlobRef[j] = xyzMhub[j] - xyzMhubDotNHatRef * nHatRef[j];
+              applyWMrotation(wmRotBlade_ref.data(),pGlobRef.data(),pLoc.data(),-1.0);
+              std::vector<double> pGlob(3,0.0);
+              applyWMrotation(wmRotBlade.data(),pLoc.data(),pGlob.data());
 
-      std::vector<double> r = {xyz[0], xyz[1], 0.0}; //Wiener-Milenkovic parameter
-      std::vector<double> r_rot(3,0.0);
-      applyWMrotation(wmRot.data(), r.data(), r_rot.data());
+              double rot = 4.0*tan(0.25 * (45.0 * M_PI / 180.0) * sinRdistSq * sinOmegaT); // 4.0 * tan(phi/4.0) parameter for Wiener-Milenkovic
+              std::vector<double> wmRot1 = {1.0/std::sqrt(3.0), 1.0/std::sqrt(3.0), 1.0/std::sqrt(3.0)};
+              std::vector<double> wmRot(3,0.0); 
+              applyWMrotation(wmRotBlade.data(), wmRot1.data(), wmRot.data());
+              for(size_t j= 0; j < 3; j++)
+                  wmRot[j] *= rot;
+              
+              std::vector<double> r_rot(3,0.0);
+              applyWMrotation(wmRot.data(), pGlob.data(), r_rot.data());
+              
+              for(size_t j=0; j < ndim; j++ )
+                  vecRefNode[j] = xyzMhubRot[j] - xyzMhub[j] + transDispRot[j] + r_rot[j] - pGlob[j];
 
-      for(size_t i=0; i < ndim; i++ )
-        vecRefNode[i] = vecRefNode[i] + r_rot[i] - r[i];
-    }
+              std::vector<double> omega = {sinRdistSq * 6.232, sinRdistSq * 6.232, sinRdistSq * 6.232};
+              std::vector<double> omegaCrossRrot(3,0.0);
+              cross(omega.data(), r_rot.data(), omegaCrossRrot.data());
+              for(size_t j=0; j < ndim; j++ )
+                  velRefNode[j] = tanRdistSq * 3.743 +  omegaCrossRrot[j];
+              
+          }
+      }
   }
 }
 
@@ -477,45 +537,49 @@ void fsiTurbine::mapDisplacements() {
         stk::topology::NODE_RANK, "mesh_displacement_ref");
     VectorFieldType* meshVelocity = meta_.get_field<VectorFieldType>(
         stk::topology::NODE_RANK, "mesh_velocity");
+    VectorFieldType* refVelocity = meta_.get_field<VectorFieldType>(
+        stk::topology::NODE_RANK, "mesh_velocity_ref");
 
+    std::vector<double> totDispNode(6,0.0); // Total displacement at any node in (transX, transY, transZ, rotX, rotY, rotZ)
+    std::vector<double> totVelNode(6,0.0); // Total velocity at any node in (transX, transY, transZ, rotX, rotY, rotZ)
+    std::vector<double> tmpNodePos(6,0.0); // Vector to temporarily store a position and orientation vector
    
     //Do the tower first
-    // stk::mesh::Selector sel(*twrPart_);
-    // const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
+    stk::mesh::Selector sel(*twrPart_);
+    const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
 
-    // for (auto b: bkts) {
-    //     for (size_t in=0; in < b->size(); in++) {
-    //         auto node = (*b)[in];
-    //         double* oldxyz = stk::mesh::field_data(*modelCoords, node);
-    //         double *dx = stk::mesh::field_data(*displacement, node);
-    //         int* dispMapNode = stk::mesh::field_data(*twrDispMap_, node);
-    //         double* dispMapInterpNode = stk::mesh::field_data(*twrDispMapInterp_, node);
-    //         double *mVel = stk::mesh::field_data(*meshVelocity, node);
+    for (auto b: bkts) {
+        for (size_t in=0; in < b->size(); in++) {
+            auto node = (*b)[in];
+            double* oldxyz = stk::mesh::field_data(*modelCoords, node);
+            double *dx = stk::mesh::field_data(*displacement, node);
+            int* dispMapNode = stk::mesh::field_data(*twrDispMap_, node);
+            double* dispMapInterpNode = stk::mesh::field_data(*twrDispMapInterp_, node);
+            double *mVel = stk::mesh::field_data(*meshVelocity, node);
             
-    //         //Find the interpolated reference position first
-    //         linInterpTotDisplacement(&brFSIdata_.twr_ref_pos[(*dispMapNode)*6], &brFSIdata_.twr_ref_pos[(*dispMapNode + 1)*6], *dispMapInterpNode, tmpNodePos.data());
+            //Find the interpolated reference position first
+            linInterpTotDisplacement(&brFSIdata_.twr_ref_pos[(*dispMapNode)*6], &brFSIdata_.twr_ref_pos[(*dispMapNode + 1)*6], *dispMapInterpNode, tmpNodePos.data());
 
-    //         //Now linearly interpolate the deflections to the intermediate location
-    //         linInterpTotDisplacement(&brFSIdata_.twr_def[(*dispMapNode)*6], &brFSIdata_.twr_def[(*dispMapNode + 1)*6], *dispMapInterpNode, totDispNode.data());
+            //Now linearly interpolate the deflections to the intermediate location
+            linInterpTotDisplacement(&brFSIdata_.twr_def[(*dispMapNode)*6], &brFSIdata_.twr_def[(*dispMapNode + 1)*6], *dispMapInterpNode, totDispNode.data());
 
-    //         //Now transfer the interpolated displacement to the CFD mesh node
-    //         computeDisplacement(totDispNode.data(), tmpNodePos.data(), dx, oldxyz);
+            //Now transfer the interpolated displacement to the CFD mesh node
+            computeDisplacement(totDispNode.data(), tmpNodePos.data(), dx, oldxyz);
 
-    //         //Now linearly interpolate the velocity to the intermediate location
-    //         linInterpTotVelocity(&brFSIdata_.twr_vel[(*dispMapNode)*6], &brFSIdata_.twr_vel[(*dispMapNode + 1)*6], *dispMapInterpNode, totVelNode.data());
+            //Now linearly interpolate the velocity to the intermediate location
+            linInterpTotVelocity(&brFSIdata_.twr_vel[(*dispMapNode)*6], &brFSIdata_.twr_vel[(*dispMapNode + 1)*6], *dispMapInterpNode, totVelNode.data());
 
-    //         //Now transfer the interpolated translational and rotational velocity to an equivalent translational velocity on the CFD mesh node
-    //         computeMeshVelocity(totVelNode.data(), totDispNode.data(), tmpNodePos.data(), mVel, oldxyz);
+            //Now transfer the interpolated translational and rotational velocity to an equivalent translational velocity on the CFD mesh node
+            computeMeshVelocity(totVelNode.data(), totDispNode.data(), tmpNodePos.data(), mVel, oldxyz);
             
-    //     }
-    // }
+        }
+    }
 
 
     // Now the blades
     int nBlades = params_.numBlades;
     int iStart = 0;
     for (int iBlade=0; iBlade < nBlades; iBlade++) {
-        std::cout << "Mapping blade " << iBlade << std::endl ;
         int nPtsBlade = params_.nBRfsiPtsBlade[iBlade];        
         stk::mesh::Selector sel(*bladePartVec_[iBlade]);
         const auto& bkts = bulk_.get_buckets(stk::topology::NODE_RANK, sel);
@@ -529,10 +593,6 @@ void fsiTurbine::mapDisplacements() {
                 int* loadMapNode = stk::mesh::field_data(*bldLoadMap_, node);                
                 double* dispMapInterpNode = stk::mesh::field_data(*bldDispMapInterp_, node);
                 double *mVel = stk::mesh::field_data(*meshVelocity, node);
-
-                std::vector<double> totDispNode(6,0.0); // Total displacement at any node in (transX, transY, transZ, rotX, rotY, rotZ)
-                std::vector<double> totVelNode(6,0.0); // Total velocity at any node in (transX, transY, transZ, rotX, rotY, rotZ)
-                std::vector<double> tmpNodePos(6,0.0); // Vector to temporarily store a position and orientation vector
 
                 //Find the interpolated reference position first
                 linInterpTotDisplacement(&brFSIdata_.bld_ref_pos[(*dispMapNode + iStart)*6], &brFSIdata_.bld_ref_pos[(*dispMapNode + iStart + 1)*6], *dispMapInterpNode, tmpNodePos.data());
@@ -552,11 +612,20 @@ void fsiTurbine::mapDisplacements() {
             }
         }
 
-        // double errorNorm = compute_error_norm(displacement, refDisplacement, bladePartVec_[iBlade]);
 
-        // if (!bulk_.parallel_rank()) {
-        //     std::cout << "Error in displacement for blade " << iBlade << " = " << errorNorm << std::endl ;
-        // }
+        std::vector<double> errorNorm(3,0.0);
+        compute_error_norm(displacement, refDisplacement, bladePartVec_[iBlade], errorNorm);
+
+        if (!bulk_.parallel_rank()) {
+            std::cout << "Error in displacement for blade " << iBlade << " = " << errorNorm[0] << " " << errorNorm[1] << " " << errorNorm[2] << std::endl ;
+        }
+
+        compute_error_norm(meshVelocity, refVelocity, bladePartVec_[iBlade], errorNorm);
+
+        if (!bulk_.parallel_rank()) {
+            std::cout << "Error in velocity for blade " << iBlade << " = " << errorNorm[0] << " " << errorNorm[1] << " " << errorNorm[2] << std::endl ;
+        }
+        
         iStart += nPtsBlade;
     }
 
@@ -687,7 +756,7 @@ void fsiTurbine::computeDisplacement(double *totDispNode, double * totPosOF,  do
     //Convert 'p' vector to the local frame of reference
     std::vector<double> pLoc(3,0.0);
     applyWMrotation(&(totPosOF[3]), p.data(), pLoc.data());
-
+ 
     std::vector<double> pRot(3,0.0);
     applyWMrotation(&(totDispNode[3]), pLoc.data(), pRot.data(),-1); // Apply the rotation corresponding to the final orientation to bring back to inertial frame
 
@@ -705,20 +774,20 @@ void fsiTurbine::computeMeshVelocity(double *totVelNode, double * totDispNode, d
         p[i] = xyzCFD[i] - totPosOF[i];
     //Convert 'p' vector to the local frame of reference
     std::vector<double> pLoc(3,0.0);
-    applyWMrotation(&(totPosOF[3]), p.data(), pLoc.data(),-1.0);
+    applyWMrotation(&(totPosOF[3]), p.data(), pLoc.data());
     
     std::vector<double> pRot(3,0.0);
-    applyWMrotation(&(totDispNode[3]), pLoc.data(), pRot.data()); // Apply the rotation corresponding to the final orientation to bring back to inertial frame
+    applyWMrotation(&(totDispNode[3]), pLoc.data(), pRot.data(),-1.0); // Apply the rotation corresponding to the final orientation to bring back to inertial frame
 
     std::vector<double> omegaCrosspRot(3,0.0);
     cross(&(totVelNode[3]), pRot.data(), omegaCrosspRot.data());
-    
+
     for (size_t i=0; i < 3; i++)
         transVelNode[i] = totVelNode[i] + omegaCrosspRot[i];
     
 }
     
-double fsiTurbine::compute_error_norm(VectorFieldType * vec, VectorFieldType * vec_ref, stk::mesh::Part * part) {
+void fsiTurbine::compute_error_norm(VectorFieldType * vec, VectorFieldType * vec_ref, stk::mesh::Part * part, std::vector<double> & err) {
 
     const int ndim = meta_.spatial_dimension();
     std::vector<double> errorNorm(3,0);
@@ -746,9 +815,7 @@ double fsiTurbine::compute_error_norm(VectorFieldType * vec, VectorFieldType * v
     stk::all_reduce_sum(bulk_.parallel(), &nNodes, &g_nNodes, 1);
 
     for (size_t i=0; i < ndim; i++)
-        g_errorNorm[i] = sqrt(g_errorNorm[i]/g_nNodes);
-
-    return g_errorNorm[0];
+        err[i] = sqrt(g_errorNorm[i]/g_nNodes);
     
 }
 

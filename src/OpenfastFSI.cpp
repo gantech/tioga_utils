@@ -357,7 +357,7 @@ void OpenfastFSI::deform_mesh(double current_time)
     for (int i=0; i < nTurbinesGlob; i++) {
         if(fsiTurbineData_[i] != NULL) {// This may not be a turbine intended for blade-resolved simulation {
             fsiTurbineData_[i]->setSampleDisplacement(current_time);
-//            fsiTurbineData_[i]->setRefDisplacement();
+            fsiTurbineData_[i]->setRefDisplacement(current_time);
             fsiTurbineData_[i]->mapDisplacements();
         }
     }
