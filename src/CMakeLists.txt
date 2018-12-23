@@ -38,6 +38,7 @@ include_directories(${CMAKE_SOURCE_DIR})
 
 set(CMAKE_CXX_COMPILER ${Trilinos_CXX_COMPILER})
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${Trilinos_CXX_COMPILER_FLAGS}")
+set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 
 add_executable(stk2tioga
   TiogaBlock.cpp
@@ -48,6 +49,7 @@ add_executable(stk2tioga
   OpenfastFSI.cpp
   fsiTurbine.cpp
   MeshMotion.cpp
+  MeshGeometry.cpp
   Timer.cpp
 
   stk2tioga.cpp)

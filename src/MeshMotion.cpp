@@ -72,7 +72,7 @@ void MeshMotion::setup()
     stk::mesh::put_field(mesh_velocity_ref, meta_.universal_part());    
 
     const int nDim = meta_.spatial_dimension();
-    std::vector<std::string> partNameVec = {"blade1", "blade2", "blade3", "hub", "nacelle", "tower"};
+    std::vector<std::string> partNameVec = {"blade_1", "blade_2", "blade_3", "hub_rot", "nacelle", "tower"};
     VectorFieldType *fsiForce = &(meta_.declare_field<VectorFieldType>(stk::topology::NODE_RANK, "fsi_force"));
     for (std::vector<std::string>::iterator it = partNameVec.begin() ; it != partNameVec.end(); ++it) {
         auto * part = meta_.get_part(*it);

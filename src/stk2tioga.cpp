@@ -23,16 +23,20 @@
 #include <stk_io/StkMeshIoBroker.hpp>
 #include <Ionit_Initializer.h>
 
+
 #include <cmath>
 
 #include "TiogaSTKIface.h"
 #include "MeshMotion.h"
+#include "MockRealm.h"
+#include "MeshGeometry.h"
 #include "Timer.h"
 #include "tioga.h"
 
 typedef stk::mesh::Field<double, stk::mesh::Cartesian> VectorFieldType;
 typedef stk::mesh::Field<double> ScalarFieldType;
 typedef stk::mesh::Field<int> ScalarIntFieldType;
+
 
 const double pi = std::acos(-1.0);
 
@@ -241,6 +245,11 @@ int main(int argc, char** argv)
           stkio.add_all_mesh_fields_as_input_fields();
       }
 
+      sierra::nalu::Simulation* sim_ = create_simulation();
+      sierra::nalu::Realm& realm_ = create_mock_realm(meta, bulk, sim_);
+      tioga_nalu::MeshGeometry *meshGeometry_ = new tioga_nalu::MeshGeometry(&realm_);
+      meshGeometry_->setup();
+
       bool has_motion = false;
       std::unique_ptr<tioga_nalu::MeshMotion> mesh_motion;
       if (inpfile["motion_info"]) {
@@ -253,7 +262,7 @@ int main(int argc, char** argv)
               new tioga_nalu::MeshMotion(meta, bulk, inpfile["motion_info"]));
           coords_name = "current_coordinates";
       }
-
+      
       const YAML::Node& oset_info = inpfile["overset_info"];
 
       if (iproc == 0)
@@ -278,6 +287,8 @@ int main(int argc, char** argv)
           std::cout << "Initializing TIOGA... " << std::endl;
       if (has_motion) mesh_motion->initialize();
 
+      meshGeometry_->initialize();
+
       size_t ofileID = init_write_mesh(inpfile, meta, bulk, stkio, 0.0);
       write_mesh(ofileID, stkio, 0.0);
       
@@ -289,6 +300,7 @@ int main(int argc, char** argv)
 
           for (int nt =0; nt < nsteps; nt++) {
               mesh_motion->execute(nt);
+              meshGeometry_->execute();
               if (iproc == 0)
                   std::cout << "--------------------------------------------------\n"
                             << "Time step/time = " << (nt + 1)
