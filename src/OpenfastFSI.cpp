@@ -207,8 +207,8 @@ void OpenfastFSI::initialize(double initial_time)
     
     compute_mapping();
     std::cout << "Proc " << bulk_.parallel_rank() << " Called computeMapping" << std::endl ;
-    send_loads();
-    std::cout << "Proc " << bulk_.parallel_rank() << " Called send loads" << std::endl ;    
+//    send_loads();
+//    std::cout << "Proc " << bulk_.parallel_rank() << " Called send loads" << std::endl ;    
     FAST.solution0();
     deform_mesh(initial_time);
     
