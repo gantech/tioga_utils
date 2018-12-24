@@ -15,7 +15,7 @@ find_path(YAML_INCLUDES yaml.h PATHS ${YAML_DIR}/include/yaml-cpp)
 set(CMAKE_PREFIX_PATH ${TIOGA_DIR} ${CMAKE_PREFIX_PATH})
 find_package(TIOGA REQUIRED)
 
-find_library(NALU_LIBRARIES NAMES libnalu.a PATHS ${NALU_DIR}/lib)
+find_library(NALU_LIBRARIES NAMES nalu libnalu.a PATHS ${NALU_DIR}/lib)
 find_path(NALU_INCLUDES Realm.h PATHS ${NALU_DIR}/include)
 
 set(CMAKE_PREFIX_PATH ${OpenFAST_DIR} ${CMAKE_PREFIX_PATH})
