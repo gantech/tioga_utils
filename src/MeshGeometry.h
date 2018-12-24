@@ -2,6 +2,8 @@
 #define MESHGEOMETRY_H
 
 #include "stk_mesh/base/Field.hpp"
+#include "stk_mesh/base/MetaData.hpp"
+#include "stk_mesh/base/BulkData.hpp"
 
 #include <Realm.h>
 #include <ComputeGeometryAlgorithmDriver.h>
