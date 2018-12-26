@@ -193,6 +193,16 @@ size_t init_write_mesh(
   stkio.add_field(fh, *twrDispMapInterp);
   stkio.add_field(fh, *bldDispMapInterp);
 
+  ScalarFieldType* dual_nodal_volume = meta.get_field<ScalarFieldType>(
+      stk::topology::NODE_RANK, "dual_nodal_volume");
+  stkio.add_field(fh, *dual_nodal_volume);
+  ScalarFieldType* ref_dual_nodal_volume = meta.get_field<ScalarFieldType>(
+      stk::topology::NODE_RANK, "ref_dual_nodal_volume");
+  stkio.add_field(fh, *ref_dual_nodal_volume);
+  VectorFieldType* currCoords = meta.get_field<VectorFieldType>(
+      stk::topology::NODE_RANK, "current_coordinates");
+  stkio.add_field(fh, *currCoords);
+  
   return fh;
 }
 
@@ -247,15 +257,16 @@ int main(int argc, char** argv)
 
       sierra::nalu::Simulation* sim_ = create_simulation();
       sierra::nalu::Realm& realm_ = create_mock_realm(meta, bulk, sim_);
+      if (has_motion) realm_.solutionOptions_->meshMotion_ = true;
       tioga_nalu::MeshGeometry *meshGeometry_ = new tioga_nalu::MeshGeometry(&realm_);
       meshGeometry_->setup();
-
+      
       bool has_motion = false;
       std::unique_ptr<tioga_nalu::MeshMotion> mesh_motion;
       if (inpfile["motion_info"]) {
           has_motion = true;
       }
-
+      
       std::string coords_name = "coordinates";
       if (has_motion) {
           mesh_motion.reset(
@@ -275,7 +286,7 @@ int main(int argc, char** argv)
           (stk::topology::ELEM_RANK, "pid_elem");
       stk::mesh::put_field(ipnode, meta.universal_part());
       stk::mesh::put_field(ipelem, meta.universal_part());
-
+      
       if (iproc == 0)
           std::cout << "Loading mesh... " << std::endl;
       {
@@ -288,7 +299,7 @@ int main(int argc, char** argv)
       if (has_motion) mesh_motion->initialize();
 
       meshGeometry_->initialize();
-
+      
       size_t ofileID = init_write_mesh(inpfile, meta, bulk, stkio, 0.0);
       write_mesh(ofileID, stkio, 0.0);
       
@@ -320,7 +331,6 @@ int main(int argc, char** argv)
       }
 
       stk::parallel_machine_barrier(bulk.parallel());
-
 
       bool dump_partitions = false;
       if (inpfile["dump_tioga_partitions"])
